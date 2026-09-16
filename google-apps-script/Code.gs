@@ -8,7 +8,7 @@
  * 4. Arriba, en el selector de funciones, elige "setupSheets" y presiona Ejecutar.
  *    La primera vez pedirá autorización — acéptala (es tu propia hoja).
  *    Esto crea las pestañas: Deudas, Telefonia, PersonalesCategorias,
- *    GastosLog, Historial y Config.
+ *    GastosLog, IngresosPersonales, Historial y Config.
  * 5. Implementar > Nueva implementación > tipo "Aplicación web".
  *    - Ejecutar como: Yo (tu cuenta)
  *    - Quién tiene acceso: Cualquier usuario
@@ -20,12 +20,13 @@
  */
 
 const SHEETS = {
-  debts:      { name: 'Deudas',               headers: ['id','nombre','saldo','tasaAnual','pagoMinimo','pagoTotal','prioridad','diaPago','tipo','notas'] },
-  telefonia:  { name: 'Telefonia',             headers: ['id','nombre','monto','diaPago'] },
-  categorias: { name: 'PersonalesCategorias',  headers: ['nombre','monto'] },
-  gastosLog:  { name: 'GastosLog',             headers: ['id','fecha','categoria','monto','descripcion'] },
-  historial:  { name: 'Historial',             headers: ['id','fecha','nombre','monto','tipo'] },
-  config:     { name: 'Config',                headers: ['clave','valor'] },
+  debts:       { name: 'Deudas',               headers: ['id','nombre','saldo','tasaAnual','pagoMinimo','pagoTotal','prioridad','diaPago','tipo','notas'] },
+  telefonia:   { name: 'Telefonia',             headers: ['id','nombre','monto','diaPago'] },
+  categorias:  { name: 'PersonalesCategorias',  headers: ['nombre','monto'] },
+  gastosLog:   { name: 'GastosLog',             headers: ['id','fecha','categoria','monto','descripcion'] },
+  ingresosPersonales: { name: 'IngresosPersonales', headers: ['id','fecha','monto','descripcion'] },
+  historial:   { name: 'Historial',             headers: ['id','fecha','nombre','monto','tipo'] },
+  config:      { name: 'Config',                headers: ['clave','valor'] },
 };
 
 function setupSheets(){
@@ -107,6 +108,9 @@ function normalizeCategoria(c){
 function normalizeGasto(g){
   return { id: g.id, fecha: g.fecha, categoria: g.categoria, monto: Number(g.monto) || 0, descripcion: g.descripcion || '' };
 }
+function normalizeIngresoPersonal(i){
+  return { id: i.id, fecha: i.fecha, monto: Number(i.monto) || 0, descripcion: i.descripcion || '' };
+}
 function normalizeHistorial(h){
   return { id: h.id, fecha: h.fecha, nombre: h.nombre, monto: Number(h.monto) || 0, tipo: h.tipo };
 }
@@ -121,6 +125,7 @@ function doGet(e){
       categorias: readTable(SHEETS.categorias).map(normalizeCategoria)
     },
     gastosLog: readTable(SHEETS.gastosLog).map(normalizeGasto),
+    ingresosPersonales: readTable(SHEETS.ingresosPersonales).map(normalizeIngresoPersonal),
     historial: readTable(SHEETS.historial).map(normalizeHistorial),
     ultimoPeriodo: cfg.ultimoPeriodo ? JSON.parse(cfg.ultimoPeriodo) : null
   };
@@ -134,6 +139,7 @@ function doPost(e){
   writeTable(SHEETS.telefonia, body.telefonia || []);
   writeTable(SHEETS.categorias, (body.personales && body.personales.categorias) || []);
   writeTable(SHEETS.gastosLog, body.gastosLog || []);
+  writeTable(SHEETS.ingresosPersonales, body.ingresosPersonales || []);
   writeTable(SHEETS.historial, body.historial || []);
   writeConfig({
     presupuesto: (body.personales && body.personales.presupuesto) || 0,

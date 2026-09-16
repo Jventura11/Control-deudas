@@ -253,6 +253,7 @@ const DEFAULT_DATA = {
     ]
   },
   gastosLog: [],
+  ingresosPersonales: [],
   historial: [],
   ultimoPeriodo: null
 };
@@ -375,6 +376,26 @@ function renderSyncFooter(){
 /* ============================= UTIL ============================= */
 const fmt = n => (n<0?'-$':'$') + Math.abs(Math.round(n)).toLocaleString('es-MX');
 const fmt2 = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
+// Campos de dinero editables: guardan/leen texto con comas de miles (formato es-MX).
+function parseMoneyInput(v){
+  if(typeof v !== 'string') return Number(v) || 0;
+  const cleaned = v.replace(/,/g, '').trim();
+  return parseFloat(cleaned) || 0;
+}
+function formatMoneyInput(n){
+  return (Number(n) || 0).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function wireMoneyInputs(root){
+  root.querySelectorAll('input.money').forEach(inp=>{
+    inp.addEventListener('focus', ()=>{
+      const raw = parseMoneyInput(inp.value);
+      inp.value = raw ? String(raw) : '';
+    });
+    inp.addEventListener('blur', ()=>{
+      inp.value = formatMoneyInput(parseMoneyInput(inp.value));
+    });
+  });
+}
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -422,19 +443,26 @@ function renderHoy(){
   const fechaHoy = last.fecha || todayISO();
   const ingreso = last.ingreso ?? '';
   const dias = last.dias ?? 14;
+  const apartado = last.apartado ?? '';
 
   el.innerHTML = `
     <div class="hero">
       <div class="bigdate">¿Qué necesito pagar hoy?</div>
       <div class="inputs">
         <div class="field"><label>Fecha en que cobraste</label><input type="date" id="in-fecha" value="${fechaHoy}"></div>
-        <div class="field"><label>Ingreso recibido</label><input type="number" id="in-ingreso" placeholder="0.00" value="${ingreso}"></div>
+        <div class="field"><label>Ingreso recibido</label><input type="text" inputmode="decimal" class="money" id="in-ingreso" placeholder="0.00" value="${ingreso!==''?formatMoneyInput(ingreso):''}"></div>
         <div class="field"><label>Días hasta tu próximo cobro</label><input type="number" id="in-dias" value="${dias}"></div>
-        <button class="btn" id="btn-calcular">Calcular</button>
       </div>
+      <div class="field" style="margin-top:10px;">
+        <label>De ese ingreso, ¿cuánto apartas para gastos personales (no para deudas)?</label>
+        <input type="text" inputmode="decimal" class="money" id="in-apartado" placeholder="0.00" value="${apartado!==''?formatMoneyInput(apartado):''}">
+      </div>
+      <div style="font-size:11.5px;color:var(--ink-soft);margin-top:-6px;margin-bottom:10px;">Ese monto no entra al cálculo de deudas de abajo — se guarda como saldo personal en "Registro de gastos" cuando confirmes.</div>
+      <button class="btn" id="btn-calcular">Calcular</button>
     </div>
     <div id="resultado"></div>
   `;
+  wireMoneyInputs(el);
   document.getElementById('btn-calcular').addEventListener('click', calcularHoy);
   if(last.fecha && last.ingreso){
     calcularHoy();
@@ -443,14 +471,16 @@ function renderHoy(){
 
 function calcularHoy(){
   const fecha = document.getElementById('in-fecha').value;
-  const ingreso = parseFloat(document.getElementById('in-ingreso').value) || 0;
+  const ingresoBruto = parseMoneyInput(document.getElementById('in-ingreso').value);
   const dias = parseInt(document.getElementById('in-dias').value) || 14;
+  const apartado = parseMoneyInput(document.getElementById('in-apartado').value);
+  const ingreso = Math.max(0, ingresoBruto - apartado);
   if(!fecha){ showToast('Pon una fecha'); return; }
   const fin = new Date(fecha+'T00:00:00');
   fin.setDate(fin.getDate()+dias);
   const finISO = fin.toISOString().slice(0,10);
 
-  state.ultimoPeriodo = {fecha, ingreso, dias};
+  state.ultimoPeriodo = {fecha, ingreso: ingresoBruto, dias, apartado};
   saveData();
 
   // obligaciones fijas (telefonia + deudas tipo fijo) que caen en el rango
@@ -477,7 +507,7 @@ function calcularHoy(){
   const resultado = document.getElementById('resultado');
   let html = '';
 
-  if(dueFixed.length===0 && dueAvalanche.length===0){
+  if(dueFixed.length===0 && dueAvalanche.length===0 && apartado<=0){
     html += `<div class="card"><div class="empty-msg">No hay pagos con fecha dentro de este rango. Aun así, considera separar tu presupuesto de gastos personales.</div></div>`;
   } else {
     html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas — no se pueden recortar.</div>`;
@@ -520,12 +550,12 @@ function calcularHoy(){
 
   // wire up recalculation on toggle/select change
   resultado.querySelectorAll('.chk-avalanche, .sel-estrategia').forEach(elm=>{
-    elm.addEventListener('change', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche));
+    elm.addEventListener('change', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado));
   });
-  if(dueFixed.length || dueAvalanche.length) recalcCaja(ingreso, dias, dueFixed, dueAvalanche);
+  if(dueFixed.length || dueAvalanche.length || apartado>0) recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado);
 }
 
-function recalcCaja(ingreso, dias, dueFixed, dueAvalanche){
+function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
   let totalFijo = dueFixed.reduce((s,i)=>s+i.monto,0);
   let totalAvalancheSeleccionado = 0;
   const seleccionAvalancheDetalle = [];
@@ -551,7 +581,8 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche){
   if(!cajaEl) return;
 
   let html = `<div class="receipt">
-    <div class="line"><span>Ingreso</span><span class="amt">${fmt2(ingreso)}</span></div>
+    <div class="line"><span>Ingreso para deudas (ya sin el apartado personal)</span><span class="amt">${fmt2(ingreso)}</span></div>
+    ${apartado>0?`<div class="line"><span>Apartado para gastos personales</span><span class="amt">${fmt2(apartado)}</span></div>`:''}
     <div class="line"><span>Pagos obligatorios (servicios y cuotas fijas)</span><span class="amt">${fmt2(totalFijo)}</span></div>
     <div class="line"><span>Tarjetas seleccionadas</span><span class="amt">${fmt2(totalAvalancheSeleccionado)}</span></div>
     <div class="line"><span>Gastos personales (proporcional)</span><span class="amt">${fmt2(presupuestoPersonal)}</span></div>
@@ -578,7 +609,7 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche){
   </div>`;
 
   cajaEl.innerHTML = html;
-  cajaEl.dataset.payload = JSON.stringify({dueFixed, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null});
+  cajaEl.dataset.payload = JSON.stringify({dueFixed, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
   document.getElementById('btn-confirmar-pago').addEventListener('click', ()=>confirmarPago(cajaEl));
 }
 
@@ -604,6 +635,11 @@ function confirmarPago(cajaEl){
   });
 
   state.historial.unshift(...entries.map(e=>({...e, id:uid('h')})));
+
+  if(payload.apartado > 0){
+    state.ingresosPersonales.unshift({id:uid('ip'), fecha, monto:payload.apartado, descripcion:'Apartado desde ingreso del '+fecha});
+  }
+
   saveData();
   showToast('Pagos registrados y saldos actualizados');
   renderAll();
@@ -619,11 +655,11 @@ function renderDeudas(){
     <tr>
       <td><span class="priority-pill">${d.prioridad}</span></td>
       <td><input type="text" data-field="nombre" data-id="${d.id}" value="${d.nombre}" style="font-weight:600;"></td>
-      <td><input type="number" data-field="saldo" data-id="${d.id}" value="${d.saldo}" class="num"></td>
+      <td><input type="text" inputmode="decimal" data-field="saldo" data-id="${d.id}" value="${formatMoneyInput(d.saldo)}" class="num money"></td>
       <td><input type="number" step="0.01" data-field="tasaAnual" data-id="${d.id}" value="${d.tasaAnual}" class="num" style="width:70px;"></td>
       <td class="num">${(d.tasaAnual/12).toFixed(2)}%</td>
-      <td><input type="number" data-field="pagoMinimo" data-id="${d.id}" value="${d.pagoMinimo}" class="num"></td>
-      <td><input type="number" data-field="pagoTotal" data-id="${d.id}" value="${d.pagoTotal}" class="num"></td>
+      <td><input type="text" inputmode="decimal" data-field="pagoMinimo" data-id="${d.id}" value="${formatMoneyInput(d.pagoMinimo)}" class="num money"></td>
+      <td><input type="text" inputmode="decimal" data-field="pagoTotal" data-id="${d.id}" value="${formatMoneyInput(d.pagoTotal)}" class="num money"></td>
       <td><input type="number" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:56px;"></td>
       <td><button class="icon-btn" data-action="del" data-id="${d.id}" title="Eliminar">✕</button></td>
     </tr>
@@ -633,9 +669,9 @@ function renderDeudas(){
   let rowsFijas = fijas.map(d=>`
     <tr>
       <td><input type="text" data-field="nombre" data-id="${d.id}" value="${d.nombre}" style="font-weight:600;"></td>
-      <td><input type="number" data-field="saldo" data-id="${d.id}" value="${d.saldo}" class="num"></td>
+      <td><input type="text" inputmode="decimal" data-field="saldo" data-id="${d.id}" value="${formatMoneyInput(d.saldo)}" class="num money"></td>
       <td><input type="number" step="0.01" data-field="tasaAnual" data-id="${d.id}" value="${d.tasaAnual}" class="num" style="width:70px;"></td>
-      <td><input type="number" data-field="pagoTotal" data-id="${d.id}" value="${d.pagoTotal}" class="num"></td>
+      <td><input type="text" inputmode="decimal" data-field="pagoTotal" data-id="${d.id}" value="${formatMoneyInput(d.pagoTotal)}" class="num money"></td>
       <td><input type="number" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:56px;"></td>
       <td><button class="icon-btn" data-action="del" data-id="${d.id}" title="Eliminar">✕</button></td>
     </tr>
@@ -671,11 +707,12 @@ function renderDeudas(){
       const d = state.debts.find(x=>x.id===inp.dataset.id);
       if(!d) return;
       const field = inp.dataset.field;
-      d[field] = (field==='nombre') ? inp.value : parseFloat(inp.value)||0;
+      d[field] = (field==='nombre') ? inp.value : parseMoneyInput(inp.value);
       saveData();
       if(field==='tasaAnual'){ renderDeudas(); } // refresh monthly rate col
     });
   });
+  wireMoneyInputs(el);
   el.querySelectorAll('button[data-action="del"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       if(!confirm('¿Eliminar esta deuda? (Úsalo solo si ya la liquidaste o fue un error)')) return;
@@ -700,7 +737,7 @@ function renderTelefonia(){
   let rows = state.telefonia.map(t=>`
     <tr>
       <td><input type="text" data-field="nombre" data-id="${t.id}" value="${t.nombre}" style="font-weight:600;"></td>
-      <td><input type="number" data-field="monto" data-id="${t.id}" value="${t.monto}" class="num"></td>
+      <td><input type="text" inputmode="decimal" data-field="monto" data-id="${t.id}" value="${formatMoneyInput(t.monto)}" class="num money"></td>
       <td><input type="number" data-field="diaPago" data-id="${t.id}" value="${t.diaPago}" class="num" style="width:56px;"></td>
       <td><button class="icon-btn" data-action="del" data-id="${t.id}">✕</button></td>
     </tr>`).join('');
@@ -723,10 +760,11 @@ function renderTelefonia(){
     inp.addEventListener('change', ()=>{
       const t = state.telefonia.find(x=>x.id===inp.dataset.id);
       if(!t) return;
-      t[inp.dataset.field] = (inp.dataset.field==='nombre')?inp.value:parseFloat(inp.value)||0;
+      t[inp.dataset.field] = (inp.dataset.field==='nombre')?inp.value:parseMoneyInput(inp.value);
       saveData(); renderTelefonia();
     });
   });
+  wireMoneyInputs(el);
   el.querySelectorAll('button[data-action="del"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       state.telefonia = state.telefonia.filter(x=>x.id!==btn.dataset.id);
@@ -751,7 +789,7 @@ function renderPersonales(){
   let rows = p.categorias.map((c,i)=>`
     <tr>
       <td><input type="text" data-idx="${i}" data-field="nombre" value="${c.nombre}" style="font-weight:600;"></td>
-      <td><input type="number" data-idx="${i}" data-field="monto" value="${c.monto}" class="num"></td>
+      <td><input type="text" inputmode="decimal" data-idx="${i}" data-field="monto" value="${formatMoneyInput(c.monto)}" class="num money"></td>
       <td><button class="icon-btn" data-action="del-cat" data-idx="${i}">✕</button></td>
     </tr>`).join('');
 
@@ -759,7 +797,7 @@ function renderPersonales(){
     <div class="card">
       <div class="section-title">Presupuesto de gastos personales</div>
       <div class="section-desc">Este monto se descuenta proporcional a los días del periodo en la pestaña "Hoy".</div>
-      <div class="field" style="max-width:220px;"><label>Presupuesto mensual total</label><input type="number" id="in-presupuesto" value="${p.presupuesto}" class="num"></div>
+      <div class="field" style="max-width:220px;"><label>Presupuesto mensual total</label><input type="text" inputmode="decimal" id="in-presupuesto" value="${formatMoneyInput(p.presupuesto)}" class="num money"></div>
       <hr class="rule">
       <div class="section-title" style="font-size:15px;">Desglose (referencia)</div>
       <div class="table-scroll"><table>
@@ -779,16 +817,17 @@ function renderPersonales(){
   `;
 
   document.getElementById('in-presupuesto').addEventListener('change', e=>{
-    p.presupuesto = parseFloat(e.target.value)||0;
+    p.presupuesto = parseMoneyInput(e.target.value);
     saveData(); renderPersonales();
   });
   el.querySelectorAll('input[data-field]').forEach(inp=>{
     inp.addEventListener('change', ()=>{
       const idx = parseInt(inp.dataset.idx);
-      p.categorias[idx][inp.dataset.field] = (inp.dataset.field==='nombre')?inp.value:parseFloat(inp.value)||0;
+      p.categorias[idx][inp.dataset.field] = (inp.dataset.field==='nombre')?inp.value:parseMoneyInput(inp.value);
       saveData(); renderPersonales();
     });
   });
+  wireMoneyInputs(el);
   el.querySelectorAll('button[data-action="del-cat"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       p.categorias.splice(parseInt(btn.dataset.idx),1);
@@ -805,6 +844,19 @@ function renderPersonales(){
 function renderRegistro(){
   const el = document.getElementById('view-registro');
   const cats = state.personales.categorias.map(c=>c.nombre);
+
+  const totalIngresosPersonales = state.ingresosPersonales.reduce((s,i)=>s+i.monto,0);
+  const totalGastado = state.gastosLog.reduce((s,g)=>s+g.monto,0);
+  const saldoPersonal = totalIngresosPersonales - totalGastado;
+
+  const filasIngresos = state.ingresosPersonales.slice(0,30).map(i=>`
+    <tr>
+      <td class="num">${i.fecha}</td>
+      <td>${i.descripcion||'Ingreso personal'}</td>
+      <td class="num" style="text-align:right;color:var(--good);">+${fmt2(i.monto)}</td>
+      <td><button class="icon-btn" data-action="del-ingreso" data-id="${i.id}">✕</button></td>
+    </tr>
+  `).join('');
 
   const porCategoria = {};
   state.gastosLog.forEach(g=>{
@@ -823,15 +875,39 @@ function renderRegistro(){
   `).join('');
 
   el.innerHTML = `
+    <div class="card" style="border-color:var(--good);">
+      <div class="section-title">Saldo personal disponible</div>
+      <div class="section-desc">Dinero que decidiste que NO es para pagar deudas — es aparte, para gasto diario. Se acumula con lo que apartes en la pestaña "Hoy" o registres aquí como ingreso personal, y baja con lo que captures como gasto abajo.</div>
+      <div class="stat" style="max-width:280px;border-color:var(--good);">
+        <div class="label">Saldo disponible ahora</div>
+        <div class="value" style="color:${saldoPersonal<0?'var(--danger)':'var(--good)'}">${fmt2(saldoPersonal)}</div>
+      </div>
+      <hr class="rule">
+      <div class="grid3">
+        <div class="field"><label>Fecha</label><input type="date" id="ip-fecha" value="${todayISO()}"></div>
+        <div class="field"><label>Monto</label><input type="text" inputmode="decimal" class="money" id="ip-monto" placeholder="0.00"></div>
+        <div class="field"><label>Descripción (opcional)</label><input type="text" id="ip-desc" placeholder="ej. venta, propina, extra del negocio..."></div>
+      </div>
+      <button class="btn secondary" id="btn-add-ingreso">+ Agregar ingreso personal</button>
+      ${state.ingresosPersonales.length ? `
+      <hr class="rule">
+      <div class="table-scroll"><table>
+        <thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right;">Monto</th><th></th></tr></thead>
+        <tbody>${filasIngresos}</tbody>
+      </table></div>` : ''}
+    </div>
+
+    <hr class="rule">
+
     <div class="card">
       <div class="section-title">Capturar un gasto</div>
-      <div class="section-desc">Aquí va cualquier gasto que no sea deuda ni renta fija — para ver en qué se te va el dinero.</div>
+      <div class="section-desc">Aquí va cualquier gasto que no sea deuda ni renta fija — para ver en qué se te va el dinero. Si lo pagaste con tu saldo personal, esto lo descuenta arriba.</div>
       <div class="grid3">
         <div class="field"><label>Fecha</label><input type="date" id="g-fecha" value="${todayISO()}"></div>
         <div class="field"><label>Categoría</label>
           <select id="g-categoria">${cats.map(c=>`<option>${c}</option>`).join('')}<option>Otro</option></select>
         </div>
-        <div class="field"><label>Monto</label><input type="number" id="g-monto" placeholder="0.00"></div>
+        <div class="field"><label>Monto</label><input type="text" inputmode="decimal" class="money" id="g-monto" placeholder="0.00"></div>
       </div>
       <div class="field"><label>Descripción (opcional)</label><input type="text" id="g-desc" placeholder="ej. súper, gasolina..."></div>
       <button class="btn" id="btn-add-gasto">Guardar gasto</button>
@@ -862,10 +938,29 @@ function renderRegistro(){
     </div>
   `;
 
+  wireMoneyInputs(el);
+
+  document.getElementById('btn-add-ingreso').addEventListener('click', ()=>{
+    const fecha = document.getElementById('ip-fecha').value;
+    const monto = parseMoneyInput(document.getElementById('ip-monto').value);
+    const descripcion = document.getElementById('ip-desc').value;
+    if(!fecha || !monto){ showToast('Falta fecha o monto'); return; }
+    state.ingresosPersonales.unshift({id:uid('ip'), fecha, monto, descripcion});
+    saveData();
+    showToast('Ingreso personal agregado');
+    renderRegistro();
+  });
+  el.querySelectorAll('button[data-action="del-ingreso"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.ingresosPersonales = state.ingresosPersonales.filter(x=>x.id!==btn.dataset.id);
+      saveData(); renderRegistro();
+    });
+  });
+
   document.getElementById('btn-add-gasto').addEventListener('click', ()=>{
     const fecha = document.getElementById('g-fecha').value;
     const categoria = document.getElementById('g-categoria').value;
-    const monto = parseFloat(document.getElementById('g-monto').value);
+    const monto = parseMoneyInput(document.getElementById('g-monto').value);
     const descripcion = document.getElementById('g-desc').value;
     if(!fecha || !monto){ showToast('Falta fecha o monto'); return; }
     state.gastosLog.unshift({id:uid('g'), fecha, categoria, monto, descripcion});
