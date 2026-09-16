@@ -620,6 +620,12 @@ function confirmarPago(cajaEl){
 
   (payload.dueFixed||[]).forEach(item=>{
     entries.push({fecha, nombre:item.nombre, monto:item.monto, tipo:'fijo'});
+    if(item.origen === 'debt-fijo'){
+      const d = state.debts.find(x=>x.id===item.id);
+      if(d){
+        d.saldo = Math.max(0, d.saldo - item.monto);
+      }
+    }
   });
 
   (payload.seleccionAvalancheDetalle||[]).forEach(sel=>{
