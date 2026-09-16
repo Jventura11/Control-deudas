@@ -365,7 +365,14 @@ function configurarSync(){
   }
   setSyncUrl(trimmed);
   renderSyncFooter();
-  pullFromSheet(false).then(()=>{ renderAll(); pushToSheet(); });
+  pullFromSheet(false).then(ok=>{
+    if(ok){
+      renderAll();
+      pushToSheet();
+    } else {
+      showToast('No se pudo leer esa hoja — no se subió nada para evitar borrar datos. Revisa la URL e intenta de nuevo.');
+    }
+  });
 }
 
 function renderSyncFooter(){
