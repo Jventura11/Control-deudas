@@ -411,18 +411,32 @@ function todayISO(){
 function daysBetween(a,b){
   return Math.round((new Date(b) - new Date(a)) / 86400000);
 }
-// Given a día-de-mes (1-31) and a date range [start, end), does it fall inside?
-function dayFallsInRange(diaPago, startISO, endISO){
-  if(!diaPago) return false;
-  const start = new Date(startISO+'T00:00:00');
-  const end = new Date(endISO+'T00:00:00');
-  let cursor = new Date(start);
-  for(let i=0;i<40;i++){
-    if(cursor >= end) break;
-    if(cursor.getDate() === diaPago && cursor >= start && cursor < end) return true;
+// Próxima fecha (desde fromISO en adelante, inclusive) en que cae el día-de-mes diaPago,
+// saltando la ocurrencia ya marcada como pagada (ultimoPagoOcurrencia).
+function proximaFechaPago(diaPago, fromISO, ultimoPagoOcurrencia){
+  if(!diaPago) return null;
+  let cursor = new Date(fromISO+'T00:00:00');
+  for(let i=0;i<400;i++){
+    if(cursor.getDate() === diaPago){
+      const iso = cursor.toISOString().slice(0,10);
+      if(iso !== ultimoPagoOcurrencia) return iso;
+    }
     cursor.setDate(cursor.getDate()+1);
   }
-  return false;
+  return null;
+}
+function diasFaltantes(diaPago, fromISO, ultimoPagoOcurrencia){
+  const prox = proximaFechaPago(diaPago, fromISO, ultimoPagoOcurrencia);
+  if(!prox) return null;
+  return daysBetween(fromISO, prox);
+}
+function tagDiasFaltantes(dias){
+  if(dias===null) return '';
+  let cls = 'neutral';
+  let label = `en ${dias} día${dias===1?'':'s'}`;
+  if(dias<=0){ cls='danger'; label='vence hoy'; }
+  else if(dias<=3){ cls='warn'; }
+  return `<span class="tag ${cls}">${label}</span>`;
 }
 
 /* ============================= NAV ============================= */
@@ -483,24 +497,31 @@ function calcularHoy(){
   state.ultimoPeriodo = {fecha, ingreso: ingresoBruto, dias, apartado};
   saveData();
 
-  // obligaciones fijas (telefonia + deudas tipo fijo) que caen en el rango
+  // obligaciones fijas (telefonia + deudas tipo fijo) que caen en el rango y no se han pagado ya para esta ocurrencia
   const dueFixed = [];
   state.telefonia.forEach(t=>{
-    if(dayFallsInRange(t.diaPago, fecha, finISO)){
-      dueFixed.push({id:t.id, origen:'telefonia', nombre:t.nombre, monto:t.monto, obligatorio:true});
+    const ocurrencia = proximaFechaPago(t.diaPago, fecha, t.ultimoPagoOcurrencia);
+    if(ocurrencia && ocurrencia < finISO){
+      dueFixed.push({id:t.id, origen:'telefonia', nombre:t.nombre, monto:t.monto, obligatorio:true, ocurrencia});
     }
   });
   state.debts.filter(d=>d.tipo==='fijo').forEach(d=>{
-    if(d.diaPago===0 || dayFallsInRange(d.diaPago, fecha, finISO)){
-      dueFixed.push({id:d.id, origen:'debt-fijo', nombre:d.nombre, monto:d.pagoTotal, obligatorio:true});
+    if(d.diaPago===0){
+      dueFixed.push({id:d.id, origen:'debt-fijo', nombre:d.nombre, monto:d.pagoTotal, obligatorio:true, ocurrencia:null});
+    } else {
+      const ocurrencia = proximaFechaPago(d.diaPago, fecha, d.ultimoPagoOcurrencia);
+      if(ocurrencia && ocurrencia < finISO){
+        dueFixed.push({id:d.id, origen:'debt-fijo', nombre:d.nombre, monto:d.pagoTotal, obligatorio:true, ocurrencia});
+      }
     }
   });
 
-  // deudas avalancha que caen en el rango (usuario puede elegir minimo/completo)
+  // deudas avalancha que caen en el rango y no se han pagado ya para esta ocurrencia
   const dueAvalanche = [];
   state.debts.filter(d=>d.tipo==='avalancha' && d.saldo>0).forEach(d=>{
-    if(dayFallsInRange(d.diaPago, fecha, finISO)){
-      dueAvalanche.push(d);
+    const ocurrencia = proximaFechaPago(d.diaPago, fecha, d.ultimoPagoOcurrencia);
+    if(ocurrencia && ocurrencia < finISO){
+      dueAvalanche.push(Object.assign({}, d, {ocurrencia}));
     }
   });
 
@@ -567,7 +588,7 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
     const monto = sel.value==='completo' ? d.pagoTotal : d.pagoMinimo;
     document.getElementById('amt-'+d.id).textContent = fmt2(monto);
     totalAvalancheSeleccionado += monto;
-    seleccionAvalancheDetalle.push({id:d.id, nombre:d.nombre, monto});
+    seleccionAvalancheDetalle.push({id:d.id, nombre:d.nombre, monto, ocurrencia:d.ocurrencia});
   });
 
   const presupuestoPersonal = state.personales.presupuesto * (dias/30);
@@ -624,7 +645,11 @@ function confirmarPago(cajaEl){
       const d = state.debts.find(x=>x.id===item.id);
       if(d){
         d.saldo = Math.max(0, d.saldo - item.monto);
+        if(item.ocurrencia) d.ultimoPagoOcurrencia = item.ocurrencia;
       }
+    } else if(item.origen === 'telefonia'){
+      const t = state.telefonia.find(x=>x.id===item.id);
+      if(t && item.ocurrencia) t.ultimoPagoOcurrencia = item.ocurrencia;
     }
   });
 
@@ -636,6 +661,7 @@ function confirmarPago(cajaEl){
     }
     if(d){
       d.saldo = Math.max(0, d.saldo - montoAplicado);
+      if(sel.ocurrencia) d.ultimoPagoOcurrencia = sel.ocurrencia;
     }
     entries.push({fecha, nombre: d?d.nombre:sel.nombre, monto: montoAplicado, tipo:'avalancha'});
   });
@@ -656,6 +682,7 @@ function renderDeudas(){
   const el = document.getElementById('view-deudas');
   const activas = state.debts.filter(d=>d.tipo==='avalancha').sort((a,b)=>a.prioridad-b.prioridad);
   const fijas = state.debts.filter(d=>d.tipo==='fijo');
+  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
 
   let rows = activas.map(d=>`
     <tr>
@@ -667,9 +694,10 @@ function renderDeudas(){
       <td><input type="text" inputmode="decimal" data-field="pagoMinimo" data-id="${d.id}" value="${formatMoneyInput(d.pagoMinimo)}" class="num money"></td>
       <td><input type="text" inputmode="decimal" data-field="pagoTotal" data-id="${d.id}" value="${formatMoneyInput(d.pagoTotal)}" class="num money"></td>
       <td><input type="number" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:56px;"></td>
+      <td>${tagDiasFaltantes(diasFaltantes(d.diaPago, ref, d.ultimoPagoOcurrencia))}</td>
       <td><button class="icon-btn" data-action="del" data-id="${d.id}" title="Eliminar">✕</button></td>
     </tr>
-    ${d.notas?`<tr><td></td><td colspan="8" style="color:var(--ink-soft);font-size:12.5px;padding-top:0;">${d.notas}</td></tr>`:''}
+    ${d.notas?`<tr><td></td><td colspan="9" style="color:var(--ink-soft);font-size:12.5px;padding-top:0;">${d.notas}</td></tr>`:''}
   `).join('');
 
   let rowsFijas = fijas.map(d=>`
@@ -679,9 +707,10 @@ function renderDeudas(){
       <td><input type="number" step="0.01" data-field="tasaAnual" data-id="${d.id}" value="${d.tasaAnual}" class="num" style="width:70px;"></td>
       <td><input type="text" inputmode="decimal" data-field="pagoTotal" data-id="${d.id}" value="${formatMoneyInput(d.pagoTotal)}" class="num money"></td>
       <td><input type="number" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:56px;"></td>
+      <td>${d.diaPago===0 ? '<span class="tag neutral">cada periodo</span>' : tagDiasFaltantes(diasFaltantes(d.diaPago, ref, d.ultimoPagoOcurrencia))}</td>
       <td><button class="icon-btn" data-action="del" data-id="${d.id}" title="Eliminar">✕</button></td>
     </tr>
-    ${d.notas?`<tr><td></td><td colspan="4" style="color:var(--ink-soft);font-size:12.5px;padding-top:0;">${d.notas}</td></tr>`:''}
+    ${d.notas?`<tr><td></td><td colspan="6" style="color:var(--ink-soft);font-size:12.5px;padding-top:0;">${d.notas}</td></tr>`:''}
   `).join('');
 
   el.innerHTML = `
@@ -689,8 +718,8 @@ function renderDeudas(){
       <div class="section-title">Orden de avalancha</div>
       <div class="section-desc">Ordenadas de mayor a menor tasa. Todo es editable — cambia saldos y mínimos cuando llegue un estado de cuenta nuevo. La prioridad se puede reacomodar arrastrando el número si liquidas alguna.</div>
       <div class="table-scroll"><table>
-        <thead><tr><th>#</th><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Tasa mensual</th><th>Pago mínimo</th><th>Pago completo</th><th>Día de pago</th><th></th></tr></thead>
-        <tbody id="tbody-avalancha">${rows || '<tr><td colspan="9" class="empty-msg">Sin deudas activas — ¡bien hecho!</td></tr>'}</tbody>
+        <thead><tr><th>#</th><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Tasa mensual</th><th>Pago mínimo</th><th>Pago completo</th><th>Día de pago</th><th>Próximo pago</th><th></th></tr></thead>
+        <tbody id="tbody-avalancha">${rows || '<tr><td colspan="10" class="empty-msg">Sin deudas activas — ¡bien hecho!</td></tr>'}</tbody>
       </table></div>
       <button class="btn secondary small" id="btn-add-avalancha" style="margin-top:14px;">+ Agregar deuda</button>
     </div>
@@ -701,8 +730,8 @@ function renderDeudas(){
       <div class="section-title">Cuotas fijas (fuera de la avalancha)</div>
       <div class="section-desc">Préstamos a 0%/tasa fija o a meses sin intereses. No compiten por el pago extra: pagarlas de más no ahorra nada.</div>
       <div class="table-scroll"><table>
-        <thead><tr><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Pago fijo</th><th>Día de pago</th><th></th></tr></thead>
-        <tbody id="tbody-fijas">${rowsFijas || '<tr><td colspan="5" class="empty-msg">Nada aquí.</td></tr>'}</tbody>
+        <thead><tr><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Pago fijo</th><th>Día de pago</th><th>Próximo pago</th><th></th></tr></thead>
+        <tbody id="tbody-fijas">${rowsFijas || '<tr><td colspan="6" class="empty-msg">Nada aquí.</td></tr>'}</tbody>
       </table></div>
       <button class="btn secondary small" id="btn-add-fija" style="margin-top:14px;">+ Agregar cuota fija</button>
     </div>
@@ -740,11 +769,13 @@ function renderDeudas(){
 /* ============================= RENDER: TELEFONIA ============================= */
 function renderTelefonia(){
   const el = document.getElementById('view-telefonia');
+  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
   let rows = state.telefonia.map(t=>`
     <tr>
       <td><input type="text" data-field="nombre" data-id="${t.id}" value="${t.nombre}" style="font-weight:600;"></td>
       <td><input type="text" inputmode="decimal" data-field="monto" data-id="${t.id}" value="${formatMoneyInput(t.monto)}" class="num money"></td>
       <td><input type="number" data-field="diaPago" data-id="${t.id}" value="${t.diaPago}" class="num" style="width:56px;"></td>
+      <td>${tagDiasFaltantes(diasFaltantes(t.diaPago, ref, t.ultimoPagoOcurrencia))}</td>
       <td><button class="icon-btn" data-action="del" data-id="${t.id}">✕</button></td>
     </tr>`).join('');
   const total = state.telefonia.reduce((s,t)=>s+t.monto,0);
@@ -753,8 +784,8 @@ function renderTelefonia(){
       <div class="section-title">Planes telefónicos</div>
       <div class="section-desc">Estos siguen pagándose siempre, completos, sin excepción.</div>
       <div class="table-scroll"><table>
-        <thead><tr><th>Línea</th><th>Monto mensual</th><th>Día de pago</th><th></th></tr></thead>
-        <tbody id="tbody-tel">${rows || '<tr><td colspan="4" class="empty-msg">Sin líneas registradas.</td></tr>'}</tbody>
+        <thead><tr><th>Línea</th><th>Monto mensual</th><th>Día de pago</th><th>Próximo pago</th><th></th></tr></thead>
+        <tbody id="tbody-tel">${rows || '<tr><td colspan="5" class="empty-msg">Sin líneas registradas.</td></tr>'}</tbody>
       </table></div>
       <div class="row-flex" style="margin-top:14px;">
         <button class="btn secondary small" id="btn-add-tel">+ Agregar línea</button>

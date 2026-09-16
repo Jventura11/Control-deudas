@@ -20,8 +20,8 @@
  */
 
 const SHEETS = {
-  debts:       { name: 'Deudas',               headers: ['id','nombre','saldo','tasaAnual','pagoMinimo','pagoTotal','prioridad','diaPago','tipo','notas'] },
-  telefonia:   { name: 'Telefonia',             headers: ['id','nombre','monto','diaPago'] },
+  debts:       { name: 'Deudas',               headers: ['id','nombre','saldo','tasaAnual','pagoMinimo','pagoTotal','prioridad','diaPago','tipo','notas','ultimoPagoOcurrencia'] },
+  telefonia:   { name: 'Telefonia',             headers: ['id','nombre','monto','diaPago','ultimoPagoOcurrencia'] },
   categorias:  { name: 'PersonalesCategorias',  headers: ['nombre','monto'] },
   gastosLog:   { name: 'GastosLog',             headers: ['id','fecha','categoria','monto','descripcion'] },
   ingresosPersonales: { name: 'IngresosPersonales', headers: ['id','fecha','monto','descripcion'] },
@@ -96,11 +96,12 @@ function normalizeDebt(d){
     saldo: Number(d.saldo) || 0, tasaAnual: Number(d.tasaAnual) || 0,
     pagoMinimo: Number(d.pagoMinimo) || 0, pagoTotal: Number(d.pagoTotal) || 0,
     prioridad: Number(d.prioridad) || 99, diaPago: Number(d.diaPago) || 0,
-    tipo: d.tipo || 'avalancha', notas: d.notas || ''
+    tipo: d.tipo || 'avalancha', notas: d.notas || '',
+    ultimoPagoOcurrencia: d.ultimoPagoOcurrencia || null
   };
 }
 function normalizeTelefonia(t){
-  return { id: t.id, nombre: t.nombre, monto: Number(t.monto) || 0, diaPago: Number(t.diaPago) || 0 };
+  return { id: t.id, nombre: t.nombre, monto: Number(t.monto) || 0, diaPago: Number(t.diaPago) || 0, ultimoPagoOcurrencia: t.ultimoPagoOcurrencia || null };
 }
 function normalizeCategoria(c){
   return { nombre: c.nombre, monto: Number(c.monto) || 0 };
