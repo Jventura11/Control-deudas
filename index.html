@@ -234,9 +234,9 @@ const DEFAULT_DATA = {
     {id:'hsbc_tc', nombre:'TC HSBC', saldo:11219.55, tasaAnual:41.90, pagoMinimo:489, pagoTotal:1806.71, prioridad:8, diaPago:8, tipo:'avalancha', notas:''},
     {id:'klar', nombre:'Klar', saldo:4059.48, tasaAnual:7.31, pagoMinimo:263.41, pagoTotal:1181.94, prioridad:9, diaPago:18, tipo:'avalancha', notas:'Tasa confirmada baja (7.31% / CAT 7.55%). Baja prioridad real dentro de la avalancha.'},
     {id:'mp_tc', nombre:'TC Mercado Pago', saldo:15274.06, tasaAnual:0, pagoMinimo:2016.44, pagoTotal:2016.44, prioridad:99, diaPago:7, tipo:'fijo', notas:'A meses sin intereses — paga siempre el completo para no perder el beneficio.'},
-    {id:'prestamo_nomina', nombre:'Préstamo Nómina HSBC', saldo:93162.89, tasaAnual:24, pagoMinimo:2385.37, pagoTotal:2385.37, prioridad:99, diaPago:0, tipo:'fijo', notas:'Se descuenta cada catorcena (días 15 y 30) — por eso aparece en todos los periodos. Tasa no confirmada con exactitud: HSBC publica un rango de 14.9% a 49.99% según el cliente; ajusta si tienes el dato exacto de tu contrato.'},
+    {id:'prestamo_nomina', nombre:'Préstamo Nómina HSBC', saldo:93162.89, tasaAnual:24, pagoMinimo:2385.37, pagoTotal:2385.37, prioridad:99, diaPago:'15,30', tipo:'fijo', notas:'Se descuenta cada catorcena (días 15 y 30). Tasa no confirmada con exactitud: HSBC publica un rango de 14.9% a 49.99% según el cliente; ajusta si tienes el dato exacto de tu contrato.'},
     {id:'prestamo_mp', nombre:'Préstamo Mercado Pago', saldo:5955.65, tasaAnual:53, pagoMinimo:5955.65, pagoTotal:5955.65, prioridad:99, diaPago:17, tipo:'fijo', notas:'Tasa directa 53% nominal / CAT 67.97%. Es el último pago pendiente.'},
-    {id:'prestamo_empresa', nombre:'Préstamo de la empresa', saldo:22222.24, tasaAnual:0, pagoMinimo:1388.89, pagoTotal:1388.89, prioridad:99, diaPago:0, tipo:'fijo', notas:'0% de interés. Se paga en ambas catorcenas hasta completar 18 pagos.'},
+    {id:'prestamo_empresa', nombre:'Préstamo de la empresa', saldo:22222.24, tasaAnual:0, pagoMinimo:1388.89, pagoTotal:1388.89, prioridad:99, diaPago:'15,30', tipo:'fijo', notas:'0% de interés. Se paga en ambas catorcenas hasta completar 18 pagos.'},
   ],
   telefonia: [
     {id:'t1', nombre:'Telcel 1 JV', monto:529.00, diaPago:17},
@@ -435,13 +435,20 @@ function todayISO(){
 function daysBetween(a,b){
   return Math.round((new Date(b) - new Date(a)) / 86400000);
 }
-// Próxima fecha (desde fromISO en adelante, inclusive) en que cae el día-de-mes diaPago,
-// saltando la ocurrencia ya marcada como pagada (ultimoPagoOcurrencia).
+// diaPago admite un solo día ("17") o varios separados por coma ("15,30") para
+// cuotas que se cobran más de una vez al mes (ej. descuentos de nómina quincenales).
+function parseDiasPago(raw){
+  if(raw===null || raw===undefined || raw==='') return [];
+  return String(raw).split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n>=1 && n<=31);
+}
+// Próxima fecha (desde fromISO en adelante, inclusive) en que cae alguno de los días
+// de diaPago, saltando la ocurrencia ya marcada como pagada (ultimoPagoOcurrencia).
 function proximaFechaPago(diaPago, fromISO, ultimoPagoOcurrencia){
-  if(!diaPago) return null;
+  const dias = parseDiasPago(diaPago);
+  if(!dias.length) return null;
   let cursor = new Date(fromISO+'T00:00:00');
   for(let i=0;i<400;i++){
-    if(cursor.getDate() === diaPago){
+    if(dias.includes(cursor.getDate())){
       const iso = cursor.toISOString().slice(0,10);
       if(iso !== ultimoPagoOcurrencia) return iso;
     }
@@ -530,13 +537,9 @@ function calcularHoy(){
     }
   });
   state.debts.filter(d=>d.tipo==='fijo' && d.saldo>0).forEach(d=>{
-    if(d.diaPago===0){
-      dueFixed.push({id:d.id, origen:'debt-fijo', nombre:d.nombre, monto:d.pagoTotal, obligatorio:true, ocurrencia:null});
-    } else {
-      const ocurrencia = proximaFechaPago(d.diaPago, fecha, d.ultimoPagoOcurrencia);
-      if(ocurrencia && ocurrencia < finISO){
-        dueFixed.push({id:d.id, origen:'debt-fijo', nombre:d.nombre, monto:d.pagoTotal, obligatorio:true, ocurrencia});
-      }
+    const ocurrencia = proximaFechaPago(d.diaPago, fecha, d.ultimoPagoOcurrencia);
+    if(ocurrencia && ocurrencia < finISO){
+      dueFixed.push({id:d.id, origen:'debt-fijo', nombre:d.nombre, monto:d.pagoTotal, obligatorio:true, ocurrencia});
     }
   });
 
@@ -717,7 +720,7 @@ function renderDeudas(){
       <td class="num">${(d.tasaAnual/12).toFixed(2)}%</td>
       <td><input type="text" inputmode="decimal" data-field="pagoMinimo" data-id="${d.id}" value="${formatMoneyInput(d.pagoMinimo)}" class="num money"></td>
       <td><input type="text" inputmode="decimal" data-field="pagoTotal" data-id="${d.id}" value="${formatMoneyInput(d.pagoTotal)}" class="num money"></td>
-      <td><input type="number" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:56px;"></td>
+      <td><input type="text" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:64px;" placeholder="17 o 15,30"></td>
       <td>${tagDiasFaltantes(diasFaltantes(d.diaPago, ref, d.ultimoPagoOcurrencia))}</td>
       <td><button class="icon-btn" data-action="del" data-id="${d.id}" title="Eliminar">✕</button></td>
     </tr>
@@ -730,8 +733,8 @@ function renderDeudas(){
       <td><input type="text" inputmode="decimal" data-field="saldo" data-id="${d.id}" value="${formatMoneyInput(d.saldo)}" class="num money"></td>
       <td><input type="number" step="0.01" data-field="tasaAnual" data-id="${d.id}" value="${d.tasaAnual}" class="num" style="width:70px;"></td>
       <td><input type="text" inputmode="decimal" data-field="pagoTotal" data-id="${d.id}" value="${formatMoneyInput(d.pagoTotal)}" class="num money"></td>
-      <td><input type="number" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:56px;"></td>
-      <td>${d.diaPago===0 ? '<span class="tag neutral">cada periodo</span>' : tagDiasFaltantes(diasFaltantes(d.diaPago, ref, d.ultimoPagoOcurrencia))}</td>
+      <td><input type="text" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:64px;" placeholder="17 o 15,30"></td>
+      <td>${tagDiasFaltantes(diasFaltantes(d.diaPago, ref, d.ultimoPagoOcurrencia))}</td>
       <td><button class="icon-btn" data-action="del" data-id="${d.id}" title="Eliminar">✕</button></td>
     </tr>
     ${d.notas?`<tr><td></td><td colspan="6" style="color:var(--ink-soft);font-size:12.5px;padding-top:0;">${d.notas}</td></tr>`:''}
@@ -752,7 +755,7 @@ function renderDeudas(){
 
     <div class="card">
       <div class="section-title">Cuotas fijas (fuera de la avalancha)</div>
-      <div class="section-desc">Préstamos a 0%/tasa fija o a meses sin intereses. No compiten por el pago extra: pagarlas de más no ahorra nada.</div>
+      <div class="section-desc">Préstamos a 0%/tasa fija o a meses sin intereses. No compiten por el pago extra: pagarlas de más no ahorra nada. En "Día de pago" puedes poner un solo día (17) o varios separados por coma (15,30) si se descuenta más de una vez al mes.</div>
       <div class="table-scroll"><table>
         <thead><tr><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Pago fijo</th><th>Día de pago</th><th>Próximo pago</th><th></th></tr></thead>
         <tbody id="tbody-fijas">${rowsFijas || '<tr><td colspan="6" class="empty-msg">Nada aquí.</td></tr>'}</tbody>
@@ -766,7 +769,7 @@ function renderDeudas(){
       const d = state.debts.find(x=>x.id===inp.dataset.id);
       if(!d) return;
       const field = inp.dataset.field;
-      d[field] = (field==='nombre') ? inp.value : parseMoneyInput(inp.value);
+      d[field] = (field==='nombre' || field==='diaPago') ? inp.value.trim() : parseMoneyInput(inp.value);
       saveData();
       if(field==='tasaAnual'){ renderDeudas(); } // refresh monthly rate col
     });
@@ -798,7 +801,7 @@ function renderTelefonia(){
     <tr>
       <td><input type="text" data-field="nombre" data-id="${t.id}" value="${t.nombre}" style="font-weight:600;"></td>
       <td><input type="text" inputmode="decimal" data-field="monto" data-id="${t.id}" value="${formatMoneyInput(t.monto)}" class="num money"></td>
-      <td><input type="number" data-field="diaPago" data-id="${t.id}" value="${t.diaPago}" class="num" style="width:56px;"></td>
+      <td><input type="text" data-field="diaPago" data-id="${t.id}" value="${t.diaPago}" class="num" style="width:64px;" placeholder="17 o 15,30"></td>
       <td>${tagDiasFaltantes(diasFaltantes(t.diaPago, ref, t.ultimoPagoOcurrencia))}</td>
       <td><button class="icon-btn" data-action="del" data-id="${t.id}">✕</button></td>
     </tr>`).join('');
@@ -821,7 +824,7 @@ function renderTelefonia(){
     inp.addEventListener('change', ()=>{
       const t = state.telefonia.find(x=>x.id===inp.dataset.id);
       if(!t) return;
-      t[inp.dataset.field] = (inp.dataset.field==='nombre')?inp.value:parseMoneyInput(inp.value);
+      t[inp.dataset.field] = (inp.dataset.field==='nombre' || inp.dataset.field==='diaPago') ? inp.value.trim() : parseMoneyInput(inp.value);
       saveData(); renderTelefonia();
     });
   });

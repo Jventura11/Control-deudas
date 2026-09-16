@@ -90,18 +90,24 @@ function writeConfig(cfgObj){
   writeTable(SHEETS.config, rows);
 }
 
+// diaPago puede ser un solo día ("17") o varios separados por coma ("15,30"),
+// así que se guarda tal cual como texto, no como número.
+function normalizeDiaPago(v){
+  if(v===undefined || v===null || v==='') return '';
+  return String(v).trim();
+}
 function normalizeDebt(d){
   return {
     id: d.id, nombre: d.nombre,
     saldo: Number(d.saldo) || 0, tasaAnual: Number(d.tasaAnual) || 0,
     pagoMinimo: Number(d.pagoMinimo) || 0, pagoTotal: Number(d.pagoTotal) || 0,
-    prioridad: Number(d.prioridad) || 99, diaPago: Number(d.diaPago) || 0,
+    prioridad: Number(d.prioridad) || 99, diaPago: normalizeDiaPago(d.diaPago),
     tipo: d.tipo || 'avalancha', notas: d.notas || '',
     ultimoPagoOcurrencia: d.ultimoPagoOcurrencia || null
   };
 }
 function normalizeTelefonia(t){
-  return { id: t.id, nombre: t.nombre, monto: Number(t.monto) || 0, diaPago: Number(t.diaPago) || 0, ultimoPagoOcurrencia: t.ultimoPagoOcurrencia || null };
+  return { id: t.id, nombre: t.nombre, monto: Number(t.monto) || 0, diaPago: normalizeDiaPago(t.diaPago), ultimoPagoOcurrencia: t.ultimoPagoOcurrencia || null };
 }
 function normalizeCategoria(c){
   return { nombre: c.nombre, monto: Number(c.monto) || 0 };
