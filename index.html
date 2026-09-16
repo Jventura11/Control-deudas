@@ -260,13 +260,30 @@ const DEFAULT_DATA = {
 
 const STORAGE_KEY = 'deudas_tracker_v1';
 
+// Google Sheets convierte celdas con pinta de fecha a su propio tipo Date,
+// y al leerlas de vuelta llegan como ISO completo (con hora/zona). Recortamos
+// a yyyy-MM-dd para que las comparaciones de fecha sigan funcionando igual
+// venga el dato de localStorage o de la hoja.
+function sliceISO(v){
+  return (typeof v === 'string' && v.length > 10) ? v.slice(0,10) : v;
+}
+function normalizeFechas(st){
+  if(st.ultimoPeriodo && st.ultimoPeriodo.fecha) st.ultimoPeriodo.fecha = sliceISO(st.ultimoPeriodo.fecha);
+  (st.historial||[]).forEach(h=>{ if(h.fecha) h.fecha = sliceISO(h.fecha); });
+  (st.gastosLog||[]).forEach(g=>{ if(g.fecha) g.fecha = sliceISO(g.fecha); });
+  (st.ingresosPersonales||[]).forEach(i=>{ if(i.fecha) i.fecha = sliceISO(i.fecha); });
+  (st.debts||[]).forEach(d=>{ if(d.ultimoPagoOcurrencia) d.ultimoPagoOcurrencia = sliceISO(d.ultimoPagoOcurrencia); });
+  (st.telefonia||[]).forEach(t=>{ if(t.ultimoPagoOcurrencia) t.ultimoPagoOcurrencia = sliceISO(t.ultimoPagoOcurrencia); });
+  return st;
+}
+
 function loadData(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
     if(!raw) return structuredClone(DEFAULT_DATA);
     const parsed = JSON.parse(raw);
     // fill in any missing top-level keys from default (safe upgrade path)
-    return Object.assign(structuredClone(DEFAULT_DATA), parsed);
+    return normalizeFechas(Object.assign(structuredClone(DEFAULT_DATA), parsed));
   }catch(e){
     console.error('No se pudo leer almacenamiento local', e);
     return structuredClone(DEFAULT_DATA);
@@ -325,7 +342,7 @@ async function pullFromSheet(silent){
   try{
     const res = await fetch(url);
     const data = await res.json();
-    state = Object.assign(structuredClone(DEFAULT_DATA), data);
+    state = normalizeFechas(Object.assign(structuredClone(DEFAULT_DATA), data));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     setSyncStatus('Datos cargados ' + new Date().toLocaleTimeString('es-MX'));
     return true;
@@ -505,7 +522,7 @@ function calcularHoy(){
       dueFixed.push({id:t.id, origen:'telefonia', nombre:t.nombre, monto:t.monto, obligatorio:true, ocurrencia});
     }
   });
-  state.debts.filter(d=>d.tipo==='fijo').forEach(d=>{
+  state.debts.filter(d=>d.tipo==='fijo' && d.saldo>0).forEach(d=>{
     if(d.diaPago===0){
       dueFixed.push({id:d.id, origen:'debt-fijo', nombre:d.nombre, monto:d.pagoTotal, obligatorio:true, ocurrencia:null});
     } else {
