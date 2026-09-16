@@ -161,31 +161,6 @@ tr:last-child td{border-bottom:none;}
 .category-bar .fill{height:100%;background:var(--brand);}
 .category-bar .camt{width:90px;text-align:right;font-family:var(--mono);font-size:12.5px;flex-shrink:0;}
 footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 0 10px;}
-.table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
-.table-scroll table{min-width:640px;}
-@media (max-width:640px){
-  .wrap{padding:0 14px;}
-  h1{font-size:24px;}
-  .subtitle{font-size:13px;}
-  nav.tabs{gap:2px;}
-  nav.tabs button{padding:8px 10px;font-size:12.5px;}
-  .card{padding:16px 15px;}
-  .hero{padding:18px 16px 16px;}
-  .hero .inputs{display:grid;grid-template-columns:1fr;gap:10px;}
-  .hero .inputs .field{min-width:0;}
-  .hero button.btn{width:100%;}
-  .due-item{flex-wrap:wrap;row-gap:8px;}
-  .due-item .name{min-width:100%;order:1;}
-  .due-item input[type=checkbox]{order:0;}
-  .due-item select{order:2;flex:1;}
-  .due-item .amt-out{order:3;flex:0 0 auto;}
-  .receipt{padding:14px 14px;}
-  .receipt .line{font-size:13px;flex-wrap:wrap;}
-  .grid3{grid-template-columns:1fr;}
-  .stat .value{font-size:19px;}
-  .category-bar .cname{width:88px;font-size:12px;}
-  .category-bar .camt{width:70px;font-size:11.5px;}
-}
 </style>
 </head>
 <body>
@@ -253,7 +228,6 @@ const DEFAULT_DATA = {
     ]
   },
   gastosLog: [],
-  ingresosPersonales: [],
   historial: [],
   ultimoPeriodo: null
 };
@@ -284,7 +258,8 @@ function saveData(){
 let state = loadData();
 
 /* ============================= UTIL ============================= */
-const fmt = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmt = n => (n<0?'-$':'$') + Math.abs(Math.round(n)).toLocaleString('es-MX');
+const fmt2 = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -332,7 +307,6 @@ function renderHoy(){
   const fechaHoy = last.fecha || todayISO();
   const ingreso = last.ingreso ?? '';
   const dias = last.dias ?? 14;
-  const apartado = last.apartado ?? '';
 
   el.innerHTML = `
     <div class="hero">
@@ -341,13 +315,8 @@ function renderHoy(){
         <div class="field"><label>Fecha en que cobraste</label><input type="date" id="in-fecha" value="${fechaHoy}"></div>
         <div class="field"><label>Ingreso recibido</label><input type="number" id="in-ingreso" placeholder="0.00" value="${ingreso}"></div>
         <div class="field"><label>Días hasta tu próximo cobro</label><input type="number" id="in-dias" value="${dias}"></div>
+        <button class="btn" id="btn-calcular">Calcular</button>
       </div>
-      <div class="field" style="margin-top:10px;">
-        <label>De ese ingreso, ¿cuánto apartas para gastos personales (no para deudas)?</label>
-        <input type="number" id="in-apartado" placeholder="0.00" value="${apartado}">
-      </div>
-      <div style="font-size:11.5px;color:var(--ink-soft);margin-top:-6px;margin-bottom:10px;">Ese monto no entra al cálculo de deudas de abajo — se guarda como saldo personal en la pestaña "Registro de gastos" cuando confirmes.</div>
-      <button class="btn" id="btn-calcular">Calcular</button>
     </div>
     <div id="resultado"></div>
   `;
@@ -359,16 +328,14 @@ function renderHoy(){
 
 function calcularHoy(){
   const fecha = document.getElementById('in-fecha').value;
-  const ingresoBruto = parseFloat(document.getElementById('in-ingreso').value) || 0;
+  const ingreso = parseFloat(document.getElementById('in-ingreso').value) || 0;
   const dias = parseInt(document.getElementById('in-dias').value) || 14;
-  const apartado = parseFloat(document.getElementById('in-apartado').value) || 0;
-  const ingreso = Math.max(0, ingresoBruto - apartado);
   if(!fecha){ showToast('Pon una fecha'); return; }
   const fin = new Date(fecha+'T00:00:00');
   fin.setDate(fin.getDate()+dias);
   const finISO = fin.toISOString().slice(0,10);
 
-  state.ultimoPeriodo = {fecha, ingreso: ingresoBruto, dias, apartado};
+  state.ultimoPeriodo = {fecha, ingreso, dias};
   saveData();
 
   // obligaciones fijas (telefonia + deudas tipo fijo) que caen en el rango
@@ -395,13 +362,13 @@ function calcularHoy(){
   const resultado = document.getElementById('resultado');
   let html = '';
 
-  if(dueFixed.length===0 && dueAvalanche.length===0 && apartado<=0){
+  if(dueFixed.length===0 && dueAvalanche.length===0){
     html += `<div class="card"><div class="empty-msg">No hay pagos con fecha dentro de este rango. Aun así, considera separar tu presupuesto de gastos personales.</div></div>`;
   } else {
     html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas — no se pueden recortar.</div>`;
     if(dueFixed.length){
       dueFixed.forEach(item=>{
-        html += `<div class="due-item"><input type="checkbox" checked disabled><div class="name">${item.nombre}</div><div class="amt-out">${fmt(item.monto)}</div></div>`;
+        html += `<div class="due-item"><input type="checkbox" checked disabled><div class="name">${item.nombre}</div><div class="amt-out">${fmt2(item.monto)}</div></div>`;
       });
     } else {
       html += `<div class="empty-msg">Ninguno esta vez.</div>`;
@@ -417,10 +384,10 @@ function calcularHoy(){
           <input type="checkbox" class="chk-avalanche" data-id="${d.id}" checked>
           <div class="name">${d.nombre} <span class="meta">· ${d.tasaAnual}% anual</span></div>
           <select class="sel-estrategia" data-id="${d.id}">
-            <option value="minimo">Mínimo ${fmt(d.pagoMinimo)}</option>
-            <option value="completo">Completo ${fmt(d.pagoTotal)}</option>
+            <option value="minimo">Mínimo ${fmt2(d.pagoMinimo)}</option>
+            <option value="completo">Completo ${fmt2(d.pagoTotal)}</option>
           </select>
-          <div class="amt-out" id="amt-${d.id}">${fmt(d.pagoMinimo)}</div>
+          <div class="amt-out" id="amt-${d.id}">${fmt2(d.pagoMinimo)}</div>
         </div>`;
       });
     } else {
@@ -438,12 +405,12 @@ function calcularHoy(){
 
   // wire up recalculation on toggle/select change
   resultado.querySelectorAll('.chk-avalanche, .sel-estrategia').forEach(elm=>{
-    elm.addEventListener('change', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado));
+    elm.addEventListener('change', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche));
   });
-  if(dueFixed.length || dueAvalanche.length || apartado>0) recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado);
+  if(dueFixed.length || dueAvalanche.length) recalcCaja(ingreso, dias, dueFixed, dueAvalanche);
 }
 
-function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
+function recalcCaja(ingreso, dias, dueFixed, dueAvalanche){
   let totalFijo = dueFixed.reduce((s,i)=>s+i.monto,0);
   let totalAvalancheSeleccionado = 0;
   const seleccionAvalancheDetalle = [];
@@ -453,14 +420,14 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
     const sel = document.querySelector(`.sel-estrategia[data-id="${d.id}"]`);
     if(!chk || !chk.checked) return;
     const monto = sel.value==='completo' ? d.pagoTotal : d.pagoMinimo;
-    document.getElementById('amt-'+d.id).textContent = fmt(monto);
+    document.getElementById('amt-'+d.id).textContent = fmt2(monto);
     totalAvalancheSeleccionado += monto;
     seleccionAvalancheDetalle.push({id:d.id, nombre:d.nombre, monto});
   });
 
   const presupuestoPersonal = state.personales.presupuesto * (dias/30);
   const amtPersonalesEl = document.getElementById('amt-personales');
-  if(amtPersonalesEl) amtPersonalesEl.textContent = fmt(presupuestoPersonal);
+  if(amtPersonalesEl) amtPersonalesEl.textContent = fmt2(presupuestoPersonal);
 
   const totalNecesario = totalFijo + totalAvalancheSeleccionado + presupuestoPersonal;
   const sobrante = ingreso - totalNecesario;
@@ -469,12 +436,11 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
   if(!cajaEl) return;
 
   let html = `<div class="receipt">
-    <div class="line"><span>Ingreso para deudas (ya sin el apartado personal)</span><span class="amt">${fmt(ingreso)}</span></div>
-    ${apartado>0?`<div class="line"><span>Apartado para gastos personales</span><span class="amt">${fmt(apartado)}</span></div>`:''}
-    <div class="line"><span>Pagos obligatorios (servicios y cuotas fijas)</span><span class="amt">${fmt(totalFijo)}</span></div>
-    <div class="line"><span>Tarjetas seleccionadas</span><span class="amt">${fmt(totalAvalancheSeleccionado)}</span></div>
-    <div class="line"><span>Gastos personales (proporcional)</span><span class="amt">${fmt(presupuestoPersonal)}</span></div>
-    <div class="line total"><span>${sobrante>=0?'Sobrante':'Faltante'}</span><span class="amt">${fmt(sobrante)}</span></div>
+    <div class="line"><span>Ingreso</span><span class="amt">${fmt2(ingreso)}</span></div>
+    <div class="line"><span>Pagos obligatorios (servicios y cuotas fijas)</span><span class="amt">${fmt2(totalFijo)}</span></div>
+    <div class="line"><span>Tarjetas seleccionadas</span><span class="amt">${fmt2(totalAvalancheSeleccionado)}</span></div>
+    <div class="line"><span>Gastos personales (proporcional)</span><span class="amt">${fmt2(presupuestoPersonal)}</span></div>
+    <div class="line total"><span>${sobrante>=0?'Sobrante':'Faltante'}</span><span class="amt">${fmt2(sobrante)}</span></div>
   </div>`;
 
   const activos = state.debts.filter(d=>d.tipo==='avalancha' && d.saldo>0).sort((a,b)=>a.prioridad-b.prioridad);
@@ -483,12 +449,12 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
   if(sobrante > 0 && objetivo){
     html += `<div class="avalanche-box">
       <div class="headline">Manda el sobrante a: ${objetivo.nombre}</div>
-      <div style="font-size:13.5px;">Es tu deuda de mayor tasa activa (${objetivo.tasaAnual}% anual). Pago extra sugerido: <strong>${fmt(sobrante)}</strong>, además de lo que ya le corresponde este periodo.</div>
+      <div style="font-size:13.5px;">Es tu deuda de mayor tasa activa (${objetivo.tasaAnual}% anual). Pago extra sugerido: <strong>${fmt2(sobrante)}</strong>, además de lo que ya le corresponde este periodo.</div>
     </div>`;
   } else if(sobrante <=0){
     html += `<div class="deficit-box">
       <div class="headline">No alcanza este periodo</div>
-      <div style="font-size:13.5px;">Faltan ${fmt(Math.abs(sobrante))}. Antes de recortar, revisa si alguna tarjeta puede pasar de "completo" a "mínimo" arriba.</div>
+      <div style="font-size:13.5px;">Faltan ${fmt2(Math.abs(sobrante))}. Antes de recortar, revisa si alguna tarjeta puede pasar de "completo" a "mínimo" arriba.</div>
     </div>`;
   }
 
@@ -497,7 +463,7 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
   </div>`;
 
   cajaEl.innerHTML = html;
-  cajaEl.dataset.payload = JSON.stringify({dueFixed, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
+  cajaEl.dataset.payload = JSON.stringify({dueFixed, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null});
   document.getElementById('btn-confirmar-pago').addEventListener('click', ()=>confirmarPago(cajaEl));
 }
 
@@ -523,11 +489,6 @@ function confirmarPago(cajaEl){
   });
 
   state.historial.unshift(...entries.map(e=>({...e, id:uid('h')})));
-
-  if(payload.apartado > 0){
-    state.ingresosPersonales.unshift({id:uid('ip'), fecha, monto:payload.apartado, descripcion:'Apartado desde ingreso del '+fecha});
-  }
-
   saveData();
   showToast('Pagos registrados y saldos actualizados');
   renderAll();
@@ -570,10 +531,10 @@ function renderDeudas(){
     <div class="card">
       <div class="section-title">Orden de avalancha</div>
       <div class="section-desc">Ordenadas de mayor a menor tasa. Todo es editable — cambia saldos y mínimos cuando llegue un estado de cuenta nuevo. La prioridad se puede reacomodar arrastrando el número si liquidas alguna.</div>
-      <div class="table-scroll"><table>
+      <table>
         <thead><tr><th>#</th><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Tasa mensual</th><th>Pago mínimo</th><th>Pago completo</th><th>Día de pago</th><th></th></tr></thead>
         <tbody id="tbody-avalancha">${rows || '<tr><td colspan="9" class="empty-msg">Sin deudas activas — ¡bien hecho!</td></tr>'}</tbody>
-      </table></div>
+      </table>
       <button class="btn secondary small" id="btn-add-avalancha" style="margin-top:14px;">+ Agregar deuda</button>
     </div>
 
@@ -582,10 +543,10 @@ function renderDeudas(){
     <div class="card">
       <div class="section-title">Cuotas fijas (fuera de la avalancha)</div>
       <div class="section-desc">Préstamos a 0%/tasa fija o a meses sin intereses. No compiten por el pago extra: pagarlas de más no ahorra nada.</div>
-      <div class="table-scroll"><table>
+      <table>
         <thead><tr><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Pago fijo</th><th>Día de pago</th><th></th></tr></thead>
         <tbody id="tbody-fijas">${rowsFijas || '<tr><td colspan="5" class="empty-msg">Nada aquí.</td></tr>'}</tbody>
-      </table></div>
+      </table>
       <button class="btn secondary small" id="btn-add-fija" style="margin-top:14px;">+ Agregar cuota fija</button>
     </div>
   `;
@@ -633,13 +594,13 @@ function renderTelefonia(){
     <div class="card">
       <div class="section-title">Planes telefónicos</div>
       <div class="section-desc">Estos siguen pagándose siempre, completos, sin excepción.</div>
-      <div class="table-scroll"><table>
+      <table>
         <thead><tr><th>Línea</th><th>Monto mensual</th><th>Día de pago</th><th></th></tr></thead>
         <tbody id="tbody-tel">${rows || '<tr><td colspan="4" class="empty-msg">Sin líneas registradas.</td></tr>'}</tbody>
-      </table></div>
+      </table>
       <div class="row-flex" style="margin-top:14px;">
         <button class="btn secondary small" id="btn-add-tel">+ Agregar línea</button>
-        <div class="num" style="font-weight:600;">Total mensual: ${fmt(total)}</div>
+        <div class="num" style="font-weight:600;">Total mensual: ${fmt2(total)}</div>
       </div>
     </div>
   `;
@@ -686,19 +647,19 @@ function renderPersonales(){
       <div class="field" style="max-width:220px;"><label>Presupuesto mensual total</label><input type="number" id="in-presupuesto" value="${p.presupuesto}" class="num"></div>
       <hr class="rule">
       <div class="section-title" style="font-size:15px;">Desglose (referencia)</div>
-      <div class="table-scroll"><table>
+      <table>
         <thead><tr><th>Categoría</th><th>Monto</th><th></th></tr></thead>
         <tbody id="tbody-cat">${rows}</tbody>
-      </table></div>
+      </table>
       <div class="row-flex" style="margin-top:12px;">
         <button class="btn secondary small" id="btn-add-cat">+ Agregar categoría</button>
-        <div class="num" style="font-weight:600; color:${sumaCat>p.presupuesto?'var(--danger)':'var(--ink)'}">Suma categorías: ${fmt(sumaCat)} / ${fmt(p.presupuesto)}</div>
+        <div class="num" style="font-weight:600; color:${sumaCat>p.presupuesto?'var(--danger)':'var(--ink)'}">Suma categorías: ${fmt2(sumaCat)} / ${fmt2(p.presupuesto)}</div>
       </div>
     </div>
     <hr class="rule">
     <div class="stat" style="max-width:320px;">
       <div class="label">Gastado este mes (según Registro de gastos)</div>
-      <div class="value" style="color:${gastadoMes>p.presupuesto?'var(--danger)':'var(--good)'}">${fmt(gastadoMes)}</div>
+      <div class="value" style="color:${gastadoMes>p.presupuesto?'var(--danger)':'var(--good)'}">${fmt2(gastadoMes)}</div>
     </div>
   `;
 
@@ -730,19 +691,6 @@ function renderRegistro(){
   const el = document.getElementById('view-registro');
   const cats = state.personales.categorias.map(c=>c.nombre);
 
-  const totalIngresosPersonales = state.ingresosPersonales.reduce((s,i)=>s+i.monto,0);
-  const totalGastado = state.gastosLog.reduce((s,g)=>s+g.monto,0);
-  const saldoPersonal = totalIngresosPersonales - totalGastado;
-
-  const filasIngresos = state.ingresosPersonales.slice(0,30).map(i=>`
-    <tr>
-      <td class="num">${i.fecha}</td>
-      <td>${i.descripcion||'Ingreso personal'}</td>
-      <td class="num" style="text-align:right;color:var(--good);">+${fmt(i.monto)}</td>
-      <td><button class="icon-btn" data-action="del-ingreso" data-id="${i.id}">✕</button></td>
-    </tr>
-  `).join('');
-
   const porCategoria = {};
   state.gastosLog.forEach(g=>{
     porCategoria[g.categoria] = (porCategoria[g.categoria]||0) + g.monto;
@@ -754,39 +702,15 @@ function renderRegistro(){
       <td class="num">${g.fecha}</td>
       <td>${g.categoria}</td>
       <td>${g.descripcion||''}</td>
-      <td class="num" style="text-align:right;">${fmt(g.monto)}</td>
+      <td class="num" style="text-align:right;">${fmt2(g.monto)}</td>
       <td><button class="icon-btn" data-action="del-gasto" data-id="${g.id}">✕</button></td>
     </tr>
   `).join('');
 
   el.innerHTML = `
-    <div class="card" style="border-color:var(--good);">
-      <div class="section-title">Saldo personal disponible</div>
-      <div class="section-desc">Dinero que decidiste que NO es para pagar deudas — es aparte, para gasto diario. Se acumula con lo que registres aquí como "ingreso personal" y baja con lo que captures como gasto abajo.</div>
-      <div class="stat" style="max-width:280px;border-color:var(--good);">
-        <div class="label">Saldo disponible ahora</div>
-        <div class="value" style="color:${saldoPersonal<0?'var(--danger)':'var(--good)'}">${fmt(saldoPersonal)}</div>
-      </div>
-      <hr class="rule">
-      <div class="grid3">
-        <div class="field"><label>Fecha</label><input type="date" id="ip-fecha" value="${todayISO()}"></div>
-        <div class="field"><label>Monto</label><input type="number" id="ip-monto" placeholder="0.00"></div>
-        <div class="field"><label>Descripción (opcional)</label><input type="text" id="ip-desc" placeholder="ej. venta, propina, extra del negocio..."></div>
-      </div>
-      <button class="btn secondary" id="btn-add-ingreso">+ Agregar ingreso personal</button>
-      ${state.ingresosPersonales.length ? `
-      <hr class="rule">
-      <div class="table-scroll"><table>
-        <thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right;">Monto</th><th></th></tr></thead>
-        <tbody>${filasIngresos}</tbody>
-      </table></div>` : ''}
-    </div>
-
-    <hr class="rule">
-
     <div class="card">
       <div class="section-title">Capturar un gasto</div>
-      <div class="section-desc">Aquí va cualquier gasto que no sea deuda ni renta fija — para ver en qué se te va el dinero. Si lo pagaste con tu saldo personal, esto lo descuenta arriba.</div>
+      <div class="section-desc">Aquí va cualquier gasto que no sea deuda ni renta fija — para ver en qué se te va el dinero.</div>
       <div class="grid3">
         <div class="field"><label>Fecha</label><input type="date" id="g-fecha" value="${todayISO()}"></div>
         <div class="field"><label>Categoría</label>
@@ -807,7 +731,7 @@ function renderRegistro(){
         <div class="category-bar">
           <div class="cname">${cat}</div>
           <div class="track"><div class="fill" style="width:${(total/maxCat*100).toFixed(0)}%"></div></div>
-          <div class="camt">${fmt(total)}</div>
+          <div class="camt">${fmt2(total)}</div>
         </div>
       `).join('') : '<div class="empty-msg">Aún no capturas gastos.</div>'}
     </div>
@@ -816,29 +740,12 @@ function renderRegistro(){
 
     <div class="card">
       <div class="section-title">Movimientos recientes</div>
-      <div class="table-scroll"><table>
+      <table>
         <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th style="text-align:right;">Monto</th><th></th></tr></thead>
         <tbody>${filas || '<tr><td colspan="5" class="empty-msg">Sin movimientos.</td></tr>'}</tbody>
-      </table></div>
+      </table>
     </div>
   `;
-
-  document.getElementById('btn-add-ingreso').addEventListener('click', ()=>{
-    const fecha = document.getElementById('ip-fecha').value;
-    const monto = parseFloat(document.getElementById('ip-monto').value);
-    const descripcion = document.getElementById('ip-desc').value;
-    if(!fecha || !monto){ showToast('Falta fecha o monto'); return; }
-    state.ingresosPersonales.unshift({id:uid('ip'), fecha, monto, descripcion});
-    saveData();
-    showToast('Ingreso personal agregado');
-    renderRegistro();
-  });
-  el.querySelectorAll('button[data-action="del-ingreso"]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      state.ingresosPersonales = state.ingresosPersonales.filter(x=>x.id!==btn.dataset.id);
-      saveData(); renderRegistro();
-    });
-  });
 
   document.getElementById('btn-add-gasto').addEventListener('click', ()=>{
     const fecha = document.getElementById('g-fecha').value;
@@ -846,7 +753,6 @@ function renderRegistro(){
     const monto = parseFloat(document.getElementById('g-monto').value);
     const descripcion = document.getElementById('g-desc').value;
     if(!fecha || !monto){ showToast('Falta fecha o monto'); return; }
-
     state.gastosLog.unshift({id:uid('g'), fecha, categoria, monto, descripcion});
     saveData();
     showToast('Gasto guardado');
@@ -868,7 +774,7 @@ function renderHistorial(){
       <td class="num">${h.fecha}</td>
       <td>${h.nombre}</td>
       <td><span class="tag ${h.tipo==='avalancha'?'good':'neutral'}">${h.tipo==='avalancha'?'Avalancha':'Fijo'}</span></td>
-      <td class="num" style="text-align:right;">${fmt(h.monto)}</td>
+      <td class="num" style="text-align:right;">${fmt2(h.monto)}</td>
     </tr>
   `).join('');
   const totalPagado = state.historial.reduce((s,h)=>s+h.monto,0);
@@ -876,13 +782,13 @@ function renderHistorial(){
     <div class="card">
       <div class="section-title">Historial de pagos registrados</div>
       <div class="section-desc">Se llena automáticamente cuando confirmas pagos desde la pestaña "Hoy".</div>
-      <div class="table-scroll"><table>
+      <table>
         <thead><tr><th>Fecha</th><th>Concepto</th><th>Tipo</th><th style="text-align:right;">Monto</th></tr></thead>
         <tbody>${filas || '<tr><td colspan="4" class="empty-msg">Aún no registras pagos.</td></tr>'}</tbody>
-      </table></div>
+      </table>
       <div class="row-flex" style="margin-top:14px;">
         <span></span>
-        <div class="num" style="font-weight:600;">Total histórico: ${fmt(totalPagado)}</div>
+        <div class="num" style="font-weight:600;">Total histórico: ${fmt2(totalPagado)}</div>
       </div>
     </div>
   `;
