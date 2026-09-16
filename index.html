@@ -318,9 +318,18 @@ function setSyncStatus(msg){
   if(el) el.textContent = msg;
 }
 
-async function pushToSheet(){
+async function pushToSheet(force){
   const url = getSyncUrl();
   if(!url) return;
+  // Salvavidas: si esta pestaña/dispositivo no tiene deudas, telefonía NI historial
+  // cargados en memoria, es casi seguro que es una sesión vieja o recién abierta —
+  // no la dejamos sobrescribir la hoja automáticamente. "Sincronizar ahora" sí puede
+  // forzarlo, por si de verdad quieres subir un estado vacío.
+  const pareceVacio = state.debts.length===0 && state.telefonia.length===0 && state.historial.length===0;
+  if(pareceVacio && !force){
+    setSyncStatus('Subida automática pausada: este dispositivo no tiene deudas/telefonía/historial cargados. Usa "sincronizar ahora" si es intencional.');
+    return;
+  }
   setSyncStatus('Sincronizando...');
   try{
     await fetch(url, {
@@ -368,7 +377,7 @@ function configurarSync(){
   pullFromSheet(false).then(ok=>{
     if(ok){
       renderAll();
-      pushToSheet();
+      pushToSheet(true);
     } else {
       showToast('No se pudo leer esa hoja — no se subió nada para evitar borrar datos. Revisa la URL e intenta de nuevo.');
     }
@@ -385,7 +394,7 @@ function renderSyncFooter(){
       <button class="icon-btn" id="btn-sync-off" style="text-decoration:underline;">desconectar</button>
       <br><span id="sync-status" style="font-size:11px;"></span>
       <br>También se guarda una copia local en este navegador.`;
-    document.getElementById('btn-sync-now').addEventListener('click', pushToSheet);
+    document.getElementById('btn-sync-now').addEventListener('click', ()=>pushToSheet(true));
     document.getElementById('btn-sync-off').addEventListener('click', ()=>{
       if(!confirm('¿Desconectar la sincronización con Google Sheets? Tus datos seguirán guardados en este navegador.')) return;
       localStorage.removeItem(SYNC_URL_KEY);
