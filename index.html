@@ -216,7 +216,7 @@ footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 
     <section class="view" id="view-historial"></section>
   </main>
 
-  <footer class="note">Todo se guarda solo en este navegador. Las tasas y montos son editables — actualízalos cuando llegue un estado de cuenta nuevo.</footer>
+  <footer class="note" id="sync-footer"></footer>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -278,9 +278,99 @@ function saveData(){
     console.error('No se pudo guardar', e);
     showToast('No se pudo guardar en este navegador');
   }
+  schedulePush();
 }
 
 let state = loadData();
+
+/* ============================= SYNC: GOOGLE SHEETS ============================= */
+const SYNC_URL_KEY = 'deudas_sync_url';
+function getSyncUrl(){ return localStorage.getItem(SYNC_URL_KEY) || ''; }
+function setSyncUrl(url){ localStorage.setItem(SYNC_URL_KEY, url); }
+
+let pushTimer = null;
+function schedulePush(){
+  if(!getSyncUrl()) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushToSheet, 900);
+}
+
+function setSyncStatus(msg){
+  const el = document.getElementById('sync-status');
+  if(el) el.textContent = msg;
+}
+
+async function pushToSheet(){
+  const url = getSyncUrl();
+  if(!url) return;
+  setSyncStatus('Sincronizando...');
+  try{
+    await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify(state)
+    });
+    setSyncStatus('Sincronizado ' + new Date().toLocaleTimeString('es-MX'));
+  }catch(e){
+    console.error('Error al sincronizar con Sheets', e);
+    setSyncStatus('Error al sincronizar — revisa tu conexión o la URL');
+  }
+}
+
+async function pullFromSheet(silent){
+  const url = getSyncUrl();
+  if(!url) return false;
+  if(!silent) setSyncStatus('Cargando desde Sheets...');
+  try{
+    const res = await fetch(url);
+    const data = await res.json();
+    state = Object.assign(structuredClone(DEFAULT_DATA), data);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    setSyncStatus('Datos cargados ' + new Date().toLocaleTimeString('es-MX'));
+    return true;
+  }catch(e){
+    console.error('Error al cargar desde Sheets', e);
+    setSyncStatus(silent ? 'No se pudo cargar desde Sheets — usando datos locales' : 'No se pudo cargar desde Sheets');
+    return false;
+  }
+}
+
+function configurarSync(){
+  const current = getSyncUrl();
+  const url = prompt('Pega aquí la URL de tu Apps Script Web App (termina en /exec). Déjalo vacío para desconectar:', current || '');
+  if(url === null) return;
+  const trimmed = url.trim();
+  if(!trimmed){
+    localStorage.removeItem(SYNC_URL_KEY);
+    renderSyncFooter();
+    return;
+  }
+  setSyncUrl(trimmed);
+  renderSyncFooter();
+  pullFromSheet(false).then(()=>{ renderAll(); pushToSheet(); });
+}
+
+function renderSyncFooter(){
+  const el = document.getElementById('sync-footer');
+  const url = getSyncUrl();
+  if(url){
+    el.innerHTML = `☁ Sincronización con Google Sheets activa —
+      <button class="icon-btn" id="btn-sync-now" style="text-decoration:underline;">sincronizar ahora</button> ·
+      <button class="icon-btn" id="btn-sync-config" style="text-decoration:underline;">cambiar URL</button> ·
+      <button class="icon-btn" id="btn-sync-off" style="text-decoration:underline;">desconectar</button>
+      <br><span id="sync-status" style="font-size:11px;"></span>
+      <br>También se guarda una copia local en este navegador.`;
+    document.getElementById('btn-sync-now').addEventListener('click', pushToSheet);
+    document.getElementById('btn-sync-off').addEventListener('click', ()=>{
+      if(!confirm('¿Desconectar la sincronización con Google Sheets? Tus datos seguirán guardados en este navegador.')) return;
+      localStorage.removeItem(SYNC_URL_KEY);
+      renderSyncFooter();
+    });
+  } else {
+    el.innerHTML = `Todo se guarda solo en este navegador. <button class="icon-btn" id="btn-sync-config" style="text-decoration:underline;">Conectar con Google Sheets</button> para respaldar y sincronizar entre dispositivos.`;
+  }
+  document.getElementById('btn-sync-config').addEventListener('click', configurarSync);
+}
 
 /* ============================= UTIL ============================= */
 const fmt = n => (n<0?'-$':'$') + Math.abs(Math.round(n)).toLocaleString('es-MX');
@@ -828,7 +918,15 @@ function renderAll(){
   renderRegistro();
   renderHistorial();
 }
-renderAll();
+
+async function init(){
+  if(getSyncUrl()){
+    await pullFromSheet(true);
+  }
+  renderAll();
+  renderSyncFooter();
+}
+init();
 </script>
 </body>
 </html>
