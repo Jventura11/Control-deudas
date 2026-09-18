@@ -168,6 +168,8 @@ footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 
 /* settings gear + panel */
 .gear-btn{flex-shrink:0;background:none;border:1px solid var(--line);border-radius:8px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:17px;color:var(--ink-soft);}
 .gear-btn:hover{color:var(--brand);border-color:var(--brand);}
+.gear-btn.spinning{animation:spin .7s linear infinite;}
+@keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 .overlay{position:fixed;inset:0;background:rgba(20,18,14,.4);z-index:60;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}
 .overlay.show{display:flex;}
 .settings-panel{position:relative;background:var(--paper);border:1px solid var(--line);border-radius:14px;max-width:480px;width:100%;padding:26px 24px 22px;}
@@ -218,7 +220,10 @@ footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 
         <h1>Control de deudas</h1>
         <div class="subtitle">Ingresa lo que cobraste y la fecha — te digo qué toca pagar y a dónde mandar lo que sobra, siguiendo el método de avalancha.</div>
       </div>
-      <button class="gear-btn" id="btn-open-settings" title="Configuración y respaldo">⚙️</button>
+      <div style="display:flex;gap:8px;flex-shrink:0;">
+        <button class="gear-btn" id="btn-header-refresh" title="Actualizar desde Google Sheets" style="display:none;">⟳</button>
+        <button class="gear-btn" id="btn-open-settings" title="Configuración y respaldo">⚙️</button>
+      </div>
     </div>
     <nav class="tabs" id="tabs">
       <button data-view="hoy" class="active">Hoy</button>
@@ -489,7 +494,26 @@ function renderSyncFooter(){
   el.innerHTML = url
     ? `☁ Sincronización con Google Sheets activa · <span id="sync-status" style="font-size:11px;"></span>`
     : `Todo se guarda solo en este navegador. Usa <span style="font-weight:600;">⚙️ Configuración y respaldo</span> para sincronizar entre dispositivos.`;
+  updateHeaderRefreshButton();
 }
+
+function updateHeaderRefreshButton(){
+  const btn = document.getElementById('btn-header-refresh');
+  btn.style.display = getSyncUrl() ? '' : 'none';
+}
+document.getElementById('btn-header-refresh').addEventListener('click', async ()=>{
+  const btn = document.getElementById('btn-header-refresh');
+  if(btn.classList.contains('spinning')) return;
+  btn.classList.add('spinning');
+  const ok = await pullFromSheet(false);
+  if(ok){
+    renderAll();
+    showToast('Datos actualizados desde Google Sheets');
+  } else {
+    showToast('No se pudo actualizar — revisa tu conexión');
+  }
+  btn.classList.remove('spinning');
+});
 
 /* ============================= PANEL DE CONFIGURACIÓN ============================= */
 function refreshSettingsPanel(){
