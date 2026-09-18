@@ -1,157 +1,1317 @@
-/**
- * Control de Deudas — sincronización con Google Sheets.
- *
- * Instrucciones de instalación:
- * 1. Crea una hoja de cálculo nueva en Google Sheets (el nombre no importa).
- * 2. Extensiones > Apps Script.
- * 3. Borra el contenido de Code.gs y pega TODO este archivo.
- * 4. Arriba, en el selector de funciones, elige "setupSheets" y presiona Ejecutar.
- *    La primera vez pedirá autorización — acéptala (es tu propia hoja).
- *    Esto crea las pestañas: Deudas, Telefonia, PersonalesCategorias,
- *    GastosLog, IngresosPersonales, Historial y Config.
- * 5. Implementar > Nueva implementación > tipo "Aplicación web".
- *    - Ejecutar como: Yo (tu cuenta)
- *    - Quién tiene acceso: Cualquier usuario
- * 6. Copia la URL que termina en /exec — esa es la que pegas en la app,
- *    en el pie de página, en "Conectar con Google Sheets".
- *
- * Nota de seguridad: cualquiera con esa URL puede leer o sobrescribir los
- * datos de esta hoja. No la compartas públicamente.
- */
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Deudas — Avalancha</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#FAF8F4;
+  --paper:#FFFFFF;
+  --ink:#20241F;
+  --ink-soft:#54574F;
+  --line:#DEDACD;
+  --line-soft:#ECE8DC;
+  --brand:#8B5E34;
+  --brand-soft:#F1E4D4;
+  --danger:#A63D40;
+  --danger-soft:#F5E1DF;
+  --good:#4C6E56;
+  --good-soft:#E1EAE3;
+  --warn:#B08628;
+  --warn-soft:#F6EBD3;
+  --radius:10px;
+  --serif:'Fraunces', Georgia, serif;
+  --sans:'Inter', -apple-system, sans-serif;
+  --mono:'IBM Plex Mono', 'Courier New', monospace;
+}
+:root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark){
+    --bg:#181A16;
+    --paper:#20231E;
+    --ink:#EDEAE0;
+    --ink-soft:#A9A79B;
+    --line:#3A3D34;
+    --line-soft:#2B2E27;
+    --brand:#D3A67B;
+    --brand-soft:#332A20;
+    --danger:#E38C8C;
+    --danger-soft:#3A2422;
+    --good:#8FBBA0;
+    --good-soft:#20302A;
+    --warn:#E0C57C;
+    --warn-soft:#3A3220;
+  }
+}
+:root[data-theme="dark"]{
+    --bg:#181A16;
+    --paper:#20231E;
+    --ink:#EDEAE0;
+    --ink-soft:#A9A79B;
+    --line:#3A3D34;
+    --line-soft:#2B2E27;
+    --brand:#D3A67B;
+    --brand-soft:#332A20;
+    --danger:#E38C8C;
+    --danger-soft:#3A2422;
+    --good:#8FBBA0;
+    --good-soft:#20302A;
+    --warn:#E0C57C;
+    --warn-soft:#3A3220;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+body{padding-bottom:80px;}
+.wrap{max-width:920px;margin:0 auto;padding:0 20px;}
+header.top{padding:28px 0 18px;border-bottom:1px solid var(--line);}
+header.top .eyebrowless{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;}
+h1{font-family:var(--serif);font-size:30px;font-weight:600;margin:0;letter-spacing:-0.01em;}
+.subtitle{color:var(--ink-soft);font-size:14px;margin-top:4px;max-width:60ch;}
+nav.tabs{display:flex;gap:4px;margin-top:18px;flex-wrap:wrap;}
+nav.tabs button{
+  font-family:var(--sans);font-size:13.5px;font-weight:600;color:var(--ink-soft);
+  background:none;border:none;padding:9px 14px;border-radius:8px 8px 0 0;cursor:pointer;
+  border-bottom:2px solid transparent;
+}
+nav.tabs button.active{color:var(--brand);border-bottom:2px solid var(--brand);background:var(--brand-soft);}
+main{padding-top:26px;}
+section.view{display:none;}
+section.view.active{display:block;animation:fadein .25s ease;}
+@keyframes fadein{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion: reduce){section.view.active{animation:none;}}
 
-const SHEETS = {
-  debts:       { name: 'Deudas',               headers: ['id','nombre','saldo','tasaAnual','pagoMinimo','pagoTotal','prioridad','diaPago','tipo','notas','ultimoPagoOcurrencia'] },
-  telefonia:   { name: 'Telefonia',             headers: ['id','nombre','monto','diaPago','ultimoPagoOcurrencia'] },
-  categorias:  { name: 'PersonalesCategorias',  headers: ['nombre','monto'] },
-  gastosLog:   { name: 'GastosLog',             headers: ['id','fecha','categoria','monto','descripcion'] },
-  ingresosPersonales: { name: 'IngresosPersonales', headers: ['id','fecha','monto','descripcion'] },
-  historial:   { name: 'Historial',             headers: ['id','fecha','nombre','monto','tipo'] },
-  config:      { name: 'Config',                headers: ['clave','valor'] },
+/* ---- shared ---- */
+.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px;}
+.section-title{font-family:var(--serif);font-size:19px;font-weight:600;margin:0 0 4px;}
+.section-desc{color:var(--ink-soft);font-size:13.5px;margin:0 0 16px;max-width:70ch;}
+label{display:block;font-size:12.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;}
+input[type=text],input[type=number],input[type=date],select,textarea{
+  width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;
+  background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px;
+}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:1px;}
+.field{margin-bottom:12px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+@media (max-width:640px){.grid2,.grid3{grid-template-columns:1fr;}}
+button.btn{
+  font-family:var(--sans);font-weight:600;font-size:13.5px;padding:10px 16px;border-radius:8px;
+  border:1px solid var(--brand);background:var(--brand);color:#fff;cursor:pointer;
+}
+button.btn.secondary{background:none;color:var(--brand);}
+button.btn.ghost{background:none;color:var(--ink-soft);border-color:var(--line);}
+button.btn.small{padding:6px 10px;font-size:12.5px;}
+button.btn:hover{filter:brightness(1.06);}
+.mono{font-family:var(--mono);}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:3px 8px;border-radius:20px;}
+.tag.danger{background:var(--danger-soft);color:var(--danger);}
+.tag.good{background:var(--good-soft);color:var(--good);}
+.tag.warn{background:var(--warn-soft);color:var(--warn);}
+.tag.neutral{background:var(--line-soft);color:var(--ink-soft);}
+hr.rule{border:none;border-top:1px solid var(--line);margin:22px 0;}
+table{width:100%;border-collapse:collapse;font-size:13.5px;}
+th{text-align:left;font-size:11.5px;text-transform:none;color:var(--ink-soft);font-weight:600;padding:8px 8px;border-bottom:1px solid var(--line);}
+td{padding:9px 8px;border-bottom:1px solid var(--line-soft);vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+.row-flex{display:flex;justify-content:space-between;align-items:center;gap:10px;}
+.stat{padding:16px 18px;border-radius:var(--radius);border:1px solid var(--line);background:var(--paper);}
+.stat .label{font-size:12px;color:var(--ink-soft);margin-bottom:6px;}
+.stat .value{font-family:var(--mono);font-size:23px;font-weight:600;}
+.stack{display:flex;flex-direction:column;gap:14px;}
+
+/* HOY hero */
+.hero{background:linear-gradient(160deg, var(--brand-soft), var(--paper) 65%);border:1px solid var(--line);border-radius:14px;padding:26px 26px 22px;margin-bottom:22px;}
+.hero .bigdate{font-family:var(--serif);font-size:15px;color:var(--ink-soft);margin-bottom:14px;}
+.hero .inputs{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;}
+.hero .inputs .field{flex:1;min-width:150px;margin-bottom:0;}
+.receipt{background:var(--paper);border:1px dashed var(--line);border-radius:10px;padding:18px 20px;margin-top:20px;}
+.receipt .line{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dotted var(--line-soft);font-size:14px;}
+.receipt .line:last-child{border-bottom:none;}
+.receipt .line .amt{font-family:var(--mono);}
+.receipt .total{font-weight:700;font-size:16px;margin-top:6px;padding-top:10px;border-top:1px solid var(--line);}
+.due-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft);}
+.due-item:last-child{border-bottom:none;}
+.due-item input[type=checkbox]{width:17px;height:17px;flex-shrink:0;accent-color:var(--brand);}
+.due-item .name{flex:1;font-weight:600;font-size:14px;}
+.due-item .meta{font-size:12px;color:var(--ink-soft);}
+.due-item select{width:auto;padding:5px 8px;font-size:12.5px;}
+.due-item .amt-out{font-family:var(--mono);font-weight:600;min-width:88px;text-align:right;}
+.avalanche-box{margin-top:18px;padding:18px 20px;border-radius:10px;background:var(--good-soft);border:1px solid var(--good);}
+.avalanche-box .headline{font-family:var(--serif);font-size:17px;font-weight:600;color:var(--good);margin-bottom:4px;}
+.deficit-box{margin-top:18px;padding:18px 20px;border-radius:10px;background:var(--danger-soft);border:1px solid var(--danger);}
+.deficit-box .headline{font-family:var(--serif);font-size:17px;font-weight:600;color:var(--danger);margin-bottom:4px;}
+
+/* debts table extras */
+.priority-pill{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--line-soft);font-size:11px;font-weight:700;color:var(--ink-soft);}
+.bar-bg{height:6px;border-radius:4px;background:var(--line-soft);overflow:hidden;margin-top:4px;}
+.bar-fill{height:100%;background:var(--brand);}
+.editable-row td{background:var(--line-soft);}
+.icon-btn{background:none;border:none;cursor:pointer;color:var(--ink-soft);font-size:15px;padding:2px 6px;}
+.icon-btn:hover{color:var(--danger);}
+.empty-msg{color:var(--ink-soft);font-size:13.5px;padding:20px 0;text-align:center;}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:20px;font-size:13.5px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .25s, transform .25s;z-index:50;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-6px);}
+.category-bar{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.category-bar .cname{width:120px;font-size:13px;flex-shrink:0;}
+.category-bar .track{flex:1;height:16px;background:var(--line-soft);border-radius:5px;overflow:hidden;}
+.category-bar .fill{height:100%;background:var(--brand);}
+.category-bar .camt{width:90px;text-align:right;font-family:var(--mono);font-size:12.5px;flex-shrink:0;}
+footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 0 10px;}
+.table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.table-scroll table{min-width:640px;}
+
+/* settings gear + panel */
+.gear-btn{flex-shrink:0;background:none;border:1px solid var(--line);border-radius:8px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:17px;color:var(--ink-soft);}
+.gear-btn:hover{color:var(--brand);border-color:var(--brand);}
+.overlay{position:fixed;inset:0;background:rgba(20,18,14,.4);z-index:60;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}
+.overlay.show{display:flex;}
+.settings-panel{position:relative;background:var(--paper);border:1px solid var(--line);border-radius:14px;max-width:480px;width:100%;padding:26px 24px 22px;}
+.settings-panel h2{font-family:var(--serif);font-size:19px;margin:0 0 4px;}
+.settings-panel .sp-desc{color:var(--ink-soft);font-size:13px;margin:0 0 16px;}
+.settings-panel .sp-section{margin-bottom:20px;}
+.settings-panel .sp-section:last-child{margin-bottom:0;}
+.settings-panel .sp-section h3{font-family:var(--serif);font-size:15px;margin:0 0 8px;}
+.settings-panel .sp-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.settings-panel .sp-status{font-size:12px;color:var(--ink-soft);margin-top:8px;min-height:14px;}
+.settings-close{position:absolute;top:14px;right:14px;}
+@media (max-width:640px){
+  .overlay{padding:0;align-items:flex-end;}
+  .settings-panel{border-radius:14px 14px 0 0;max-height:90vh;overflow-y:auto;}
+}
+
+@media (max-width:640px){
+  .wrap{padding:0 14px;}
+  h1{font-size:24px;}
+  .subtitle{font-size:13px;}
+  nav.tabs{gap:2px;}
+  nav.tabs button{padding:8px 10px;font-size:12.5px;}
+  .card{padding:16px 15px;}
+  .hero{padding:18px 16px 16px;}
+  .hero .inputs{display:grid;grid-template-columns:1fr;gap:10px;}
+  .hero .inputs .field{min-width:0;}
+  .hero button.btn{width:100%;}
+  .due-item{flex-wrap:wrap;row-gap:8px;}
+  .due-item .name{min-width:100%;order:1;}
+  .due-item input[type=checkbox]{order:0;}
+  .due-item select{order:2;flex:1;}
+  .due-item .amt-out{order:3;flex:0 0 auto;}
+  .receipt{padding:14px 14px;}
+  .receipt .line{font-size:13px;flex-wrap:wrap;}
+  .grid3{grid-template-columns:1fr;}
+  .stat .value{font-size:19px;}
+  .category-bar .cname{width:88px;font-size:12px;}
+  .category-bar .camt{width:70px;font-size:11.5px;}
+  input[type=text],input[type=number],input[type=date],select,textarea{font-size:16px;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrowless">
+      <div>
+        <h1>Control de deudas</h1>
+        <div class="subtitle">Ingresa lo que cobraste y la fecha — te digo qué toca pagar y a dónde mandar lo que sobra, siguiendo el método de avalancha.</div>
+      </div>
+      <button class="gear-btn" id="btn-open-settings" title="Configuración y respaldo">⚙️</button>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-view="hoy" class="active">Hoy</button>
+      <button data-view="deudas">Deudas</button>
+      <button data-view="telefonia">Planes telefónicos</button>
+      <button data-view="personales">Gastos personales</button>
+      <button data-view="registro">Registro de gastos</button>
+      <button data-view="historial">Historial</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="view active" id="view-hoy"></section>
+    <section class="view" id="view-deudas"></section>
+    <section class="view" id="view-telefonia"></section>
+    <section class="view" id="view-personales"></section>
+    <section class="view" id="view-registro"></section>
+    <section class="view" id="view-historial"></section>
+  </main>
+
+  <footer class="note" id="sync-footer"></footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<div class="overlay" id="settings-overlay">
+  <div class="settings-panel">
+    <button class="icon-btn settings-close" id="btn-close-settings" title="Cerrar">✕</button>
+    <h2>Configuración y respaldo</h2>
+    <p class="sp-desc">Tus datos viven principalmente en este navegador. Desde aquí puedes respaldarlos a un archivo, o sincronizarlos entre dispositivos con Google Sheets.</p>
+
+    <div class="sp-section">
+      <h3>Respaldo en Excel</h3>
+      <div class="sp-row">
+        <button class="btn secondary small" id="btn-export-excel">⬇ Descargar copia (.xlsx)</button>
+        <button class="btn ghost small" id="btn-import-excel">⬆ Restaurar desde Excel</button>
+        <input type="file" id="in-import-excel" accept=".xlsx,.xls" style="display:none;">
+      </div>
+      <div class="sp-status">Restaurar reemplaza todo lo que tienes capturado ahora en este navegador — úsalo para respaldar antes de un cambio grande, o para migrar a otro dispositivo.</div>
+    </div>
+
+    <hr class="rule">
+
+    <div class="sp-section">
+      <h3>Sincronización con Google Sheets</h3>
+      <div class="field"><label>URL de tu Apps Script Web App (termina en /exec)</label>
+        <input type="text" id="sp-sync-url" placeholder="https://script.google.com/macros/s/..../exec">
+      </div>
+      <div class="sp-row">
+        <button class="btn small" id="btn-sp-save-url">Guardar y conectar</button>
+        <button class="btn secondary small" id="btn-sp-pull">⬇ Actualizar</button>
+        <button class="btn secondary small" id="btn-sp-push">⬆ Subir cambios</button>
+        <button class="btn ghost small" id="btn-sp-disconnect">Desconectar</button>
+      </div>
+      <div class="sp-status" id="sp-sync-status"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================= DATA ============================= */
+const DEFAULT_DATA = {
+  debts: [
+    {id:'nu', nombre:'Nu Oro', saldo:5416.77, tasaAnual:99.90, pagoMinimo:4147.34, pagoTotal:5169.45, prioridad:1, diaPago:14, tipo:'avalancha', notas:'Fecha límite 14 de cada mes. El "mínimo" real este ciclo ya incluye 2 disposiciones de efectivo a meses con intereses (87.96%) que vencen completas — evita retirar más de esta tarjeta.'},
+    {id:'chapur', nombre:'Chapur', saldo:5499.39, tasaAnual:67.2, pagoMinimo:816.42, pagoTotal:816.42, prioridad:2, diaPago:5, tipo:'avalancha', notas:''},
+    {id:'amex', nombre:'Amex', saldo:11064.00, tasaAnual:64, pagoMinimo:500, pagoTotal:3314.03, prioridad:3, diaPago:25, tipo:'avalancha', notas:''},
+    {id:'joy613', nombre:'TC Banamex Joy (613)', saldo:18377.00, tasaAnual:63.14, pagoMinimo:1850, pagoTotal:2737.99, prioridad:4, diaPago:28, tipo:'avalancha', notas:''},
+    {id:'joy719', nombre:'TC Banamex Joy (719)', saldo:19288.62, tasaAnual:63.14, pagoMinimo:720, pagoTotal:1524.29, prioridad:5, diaPago:3, tipo:'avalancha', notas:''},
+    {id:'clasica', nombre:'TC Banamex Clásica', saldo:41258.95, tasaAnual:60.27, pagoMinimo:3250, pagoTotal:3741.05, prioridad:6, diaPago:10, tipo:'avalancha', notas:'El saldo creció bastante — confirmar si son cargos nuevos o interés acumulado.'},
+    {id:'bbva', nombre:'TC BBVA', saldo:8075.89, tasaAnual:52.51, pagoMinimo:321.39, pagoTotal:4944.56, prioridad:7, diaPago:3, tipo:'avalancha', notas:''},
+    {id:'hsbc_tc', nombre:'TC HSBC', saldo:11219.55, tasaAnual:41.90, pagoMinimo:489, pagoTotal:1806.71, prioridad:8, diaPago:8, tipo:'avalancha', notas:''},
+    {id:'klar', nombre:'Klar', saldo:4059.48, tasaAnual:7.31, pagoMinimo:263.41, pagoTotal:1181.94, prioridad:9, diaPago:18, tipo:'avalancha', notas:'Tasa confirmada baja (7.31% / CAT 7.55%). Baja prioridad real dentro de la avalancha.'},
+    {id:'mp_tc', nombre:'TC Mercado Pago', saldo:15274.06, tasaAnual:0, pagoMinimo:2016.44, pagoTotal:2016.44, prioridad:99, diaPago:7, tipo:'fijo', notas:'A meses sin intereses — paga siempre el completo para no perder el beneficio.'},
+    {id:'prestamo_nomina', nombre:'Préstamo Nómina HSBC', saldo:93162.89, tasaAnual:24, pagoMinimo:2385.37, pagoTotal:2385.37, prioridad:99, diaPago:'15,30', tipo:'fijo', notas:'Se descuenta cada catorcena (días 15 y 30). Tasa no confirmada con exactitud: HSBC publica un rango de 14.9% a 49.99% según el cliente; ajusta si tienes el dato exacto de tu contrato.'},
+    {id:'prestamo_mp', nombre:'Préstamo Mercado Pago', saldo:5955.65, tasaAnual:53, pagoMinimo:5955.65, pagoTotal:5955.65, prioridad:99, diaPago:17, tipo:'fijo', notas:'Tasa directa 53% nominal / CAT 67.97%. Es el último pago pendiente.'},
+    {id:'prestamo_empresa', nombre:'Préstamo de la empresa', saldo:22222.24, tasaAnual:0, pagoMinimo:1388.89, pagoTotal:1388.89, prioridad:99, diaPago:'15,30', tipo:'fijo', notas:'0% de interés. Se paga en ambas catorcenas hasta completar 18 pagos.'},
+  ],
+  telefonia: [
+    {id:'t1', nombre:'Telcel 1 JV', monto:529.00, diaPago:17},
+    {id:'t2', nombre:'Telcel 2 JV', monto:279.00, diaPago:4},
+    {id:'t3', nombre:'Telcel-Iveth', monto:556.00, diaPago:17},
+  ],
+  personales: {
+    presupuesto: 4000,
+    categorias: [
+      {nombre:'Comida', monto:1600},
+      {nombre:'Transporte', monto:800},
+      {nombre:'Casa (CFE, internet)', monto:1000},
+      {nombre:'Otros', monto:600},
+    ]
+  },
+  gastosLog: [],
+  ingresosPersonales: [],
+  historial: [],
+  ultimoPeriodo: null
 };
 
-function setupSheets(){
-  Object.values(SHEETS).forEach(cfg => getOrCreateSheet(cfg.name, cfg.headers));
+const STORAGE_KEY = 'deudas_tracker_v1';
+
+// Google Sheets convierte celdas con pinta de fecha a su propio tipo Date,
+// y al leerlas de vuelta llegan como ISO completo (con hora/zona). Recortamos
+// a yyyy-MM-dd para que las comparaciones de fecha sigan funcionando igual
+// venga el dato de localStorage o de la hoja.
+function sliceISO(v){
+  return (typeof v === 'string' && v.length > 10) ? v.slice(0,10) : v;
+}
+function normalizeFechas(st){
+  if(st.ultimoPeriodo && st.ultimoPeriodo.fecha) st.ultimoPeriodo.fecha = sliceISO(st.ultimoPeriodo.fecha);
+  (st.historial||[]).forEach(h=>{ if(h.fecha) h.fecha = sliceISO(h.fecha); });
+  (st.gastosLog||[]).forEach(g=>{ if(g.fecha) g.fecha = sliceISO(g.fecha); });
+  (st.ingresosPersonales||[]).forEach(i=>{ if(i.fecha) i.fecha = sliceISO(i.fecha); });
+  (st.debts||[]).forEach(d=>{ if(d.ultimoPagoOcurrencia) d.ultimoPagoOcurrencia = sliceISO(d.ultimoPagoOcurrencia); });
+  (st.telefonia||[]).forEach(t=>{ if(t.ultimoPagoOcurrencia) t.ultimoPagoOcurrencia = sliceISO(t.ultimoPagoOcurrencia); });
+  return st;
 }
 
-function getOrCreateSheet(name, headers){
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(name);
-  if(!sh){
-    sh = ss.insertSheet(name);
-    sh.appendRow(headers);
-    sh.setFrozenRows(1);
+function loadData(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return structuredClone(DEFAULT_DATA);
+    const parsed = JSON.parse(raw);
+    // fill in any missing top-level keys from default (safe upgrade path)
+    return normalizeFechas(Object.assign(structuredClone(DEFAULT_DATA), parsed));
+  }catch(e){
+    console.error('No se pudo leer almacenamiento local', e);
+    return structuredClone(DEFAULT_DATA);
   }
-  return sh;
+}
+function saveData(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }catch(e){
+    console.error('No se pudo guardar', e);
+    showToast('No se pudo guardar en este navegador');
+  }
+  schedulePush();
 }
 
-function readTable(cfg){
-  const sh = getOrCreateSheet(cfg.name, cfg.headers);
-  const values = sh.getDataRange().getValues();
-  if(values.length < 2) return [];
-  const hdr = values[0];
-  return values.slice(1)
-    .filter(row => row.some(c => c !== ''))
-    .map(row => {
-      const obj = {};
-      hdr.forEach((h, i) => {
-        let v = row[i];
-        if(v instanceof Date){
-          v = Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-        }
-        obj[h] = v;
-      });
-      return obj;
+let state = loadData();
+
+/* ============================= SYNC: GOOGLE SHEETS ============================= */
+const SYNC_URL_KEY = 'deudas_sync_url';
+function getSyncUrl(){ return localStorage.getItem(SYNC_URL_KEY) || ''; }
+function setSyncUrl(url){ localStorage.setItem(SYNC_URL_KEY, url); }
+
+let pushTimer = null;
+let isPushing = false;
+let pushPending = false;
+let pushRetryTimer = null;
+let lastSyncAt = null; // Date del último push/pull exitoso
+
+function schedulePush(){
+  if(!getSyncUrl()) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(()=>{ pushTimer = null; pushToSheet(); }, 900);
+}
+
+function setSyncStatus(msg){
+  ['sync-status','sp-sync-status'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.textContent = msg;
+  });
+}
+
+async function pushToSheet(force){
+  const url = getSyncUrl();
+  if(!url) return;
+  // Salvavidas: si esta pestaña/dispositivo no tiene deudas, telefonía NI historial
+  // cargados en memoria, es casi seguro que es una sesión vieja o recién abierta —
+  // no la dejamos sobrescribir la hoja automáticamente. "Subir cambios" sí puede
+  // forzarlo, por si de verdad quieres subir un estado vacío.
+  const pareceVacio = state.debts.length===0 && state.telefonia.length===0 && state.historial.length===0;
+  if(pareceVacio && !force){
+    setSyncStatus('Subida automática pausada: este dispositivo no tiene deudas/telefonía/historial cargados. Usa "subir cambios" si es intencional.');
+    return;
+  }
+  // Evita que dos push se crucen: si ya hay uno en curso, encola uno de seguimiento.
+  if(isPushing){ pushPending = true; return; }
+  isPushing = true;
+  clearTimeout(pushRetryTimer);
+  setSyncStatus('Sincronizando...');
+  try{
+    await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify(state)
     });
-}
-
-function writeTable(cfg, rows){
-  const sh = getOrCreateSheet(cfg.name, cfg.headers);
-  sh.clearContents();
-  sh.appendRow(cfg.headers);
-  if(rows && rows.length){
-    const data = rows.map(r => cfg.headers.map(h => (r[h] !== undefined && r[h] !== null) ? r[h] : ''));
-    sh.getRange(2, 1, data.length, cfg.headers.length).setValues(data);
+    lastSyncAt = new Date();
+    setSyncStatus('Sincronizado ' + lastSyncAt.toLocaleTimeString('es-MX'));
+  }catch(e){
+    console.error('Error al sincronizar con Sheets', e);
+    setSyncStatus('Error al sincronizar — reintentando en unos segundos...');
+    // Reintento automático: una falla de red momentánea no debe perder el cambio.
+    pushRetryTimer = setTimeout(()=>pushToSheet(force), 8000);
+  }finally{
+    isPushing = false;
+    if(pushPending){
+      pushPending = false;
+      schedulePush();
+    }
   }
-  sh.setFrozenRows(1);
 }
 
-function readConfig(){
-  const rows = readTable(SHEETS.config);
-  const cfg = {};
-  rows.forEach(r => { cfg[r.clave] = r.valor; });
-  return cfg;
+async function pullFromSheet(silent){
+  const url = getSyncUrl();
+  if(!url) return false;
+  if(!silent) setSyncStatus('Cargando desde Sheets...');
+  try{
+    const res = await fetch(url);
+    const data = await res.json();
+    state = normalizeFechas(Object.assign(structuredClone(DEFAULT_DATA), data));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    lastSyncAt = new Date();
+    setSyncStatus('Datos cargados ' + lastSyncAt.toLocaleTimeString('es-MX'));
+    return true;
+  }catch(e){
+    console.error('Error al cargar desde Sheets', e);
+    setSyncStatus(silent ? 'No se pudo cargar desde Sheets — usando datos locales' : 'No se pudo cargar desde Sheets');
+    return false;
+  }
 }
 
-function writeConfig(cfgObj){
-  const rows = Object.entries(cfgObj).map(([clave, valor]) => ({
-    clave,
-    valor: typeof valor === 'object' ? JSON.stringify(valor) : valor
-  }));
-  writeTable(SHEETS.config, rows);
+// Auto-actualización: al volver a la pestaña y cada pocos minutos, si hay
+// sincronización activa, jala los datos más recientes de la hoja. Si el usuario
+// está escribiendo en un campo en ese momento, no se vuelve a dibujar la pantalla
+// (para no perder lo que está tecleando) — el dato ya quedó guardado por debajo
+// y se refleja en el próximo render natural (cambiar de pestaña, guardar algo).
+async function autoRefresh(){
+  // Nunca jalar de la hoja si hay un cambio local sin subir todavía —
+  // se perdería ese cambio al reemplazar el estado con la versión remota.
+  if(!getSyncUrl() || isPushing || pushPending || pushTimer) return;
+  const active = document.activeElement;
+  const estaEditando = active && ['INPUT','SELECT','TEXTAREA'].includes(active.tagName);
+  const ok = await pullFromSheet(true);
+  if(ok && !estaEditando) renderAll();
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'visible') autoRefresh();
+});
+setInterval(autoRefresh, 3*60*1000);
+
+// Avisa antes de cerrar/recargar si hay un cambio que todavía no terminó de subirse.
+window.addEventListener('beforeunload', (e)=>{
+  if(getSyncUrl() && (pushTimer || isPushing || pushPending)){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+function conectarSync(url){
+  const trimmed = (url||'').trim();
+  if(!trimmed) return;
+  setSyncUrl(trimmed);
+  renderSyncFooter();
+  pullFromSheet(false).then(ok=>{
+    if(ok){
+      renderAll();
+      pushToSheet(true);
+      showToast('Conectado a Google Sheets');
+    } else {
+      showToast('No se pudo leer esa hoja — no se subió nada para evitar borrar datos. Revisa la URL e intenta de nuevo.');
+    }
+  });
 }
 
-// diaPago puede ser un solo día ("17") o varios separados por coma ("15,30"),
-// así que se guarda tal cual como texto, no como número.
-function normalizeDiaPago(v){
-  if(v===undefined || v===null || v==='') return '';
-  return String(v).trim();
+function renderSyncFooter(){
+  const el = document.getElementById('sync-footer');
+  const url = getSyncUrl();
+  el.innerHTML = url
+    ? `☁ Sincronización con Google Sheets activa · <span id="sync-status" style="font-size:11px;"></span>`
+    : `Todo se guarda solo en este navegador. Usa <span style="font-weight:600;">⚙️ Configuración y respaldo</span> para sincronizar entre dispositivos.`;
 }
-function normalizeDebt(d){
-  return {
-    id: d.id, nombre: d.nombre,
-    saldo: Number(d.saldo) || 0, tasaAnual: Number(d.tasaAnual) || 0,
-    pagoMinimo: Number(d.pagoMinimo) || 0, pagoTotal: Number(d.pagoTotal) || 0,
-    prioridad: Number(d.prioridad) || 99, diaPago: normalizeDiaPago(d.diaPago),
-    tipo: d.tipo || 'avalancha', notas: d.notas || '',
-    ultimoPagoOcurrencia: d.ultimoPagoOcurrencia || null
+
+/* ============================= PANEL DE CONFIGURACIÓN ============================= */
+function refreshSettingsPanel(){
+  const url = getSyncUrl();
+  document.getElementById('sp-sync-url').value = url;
+  const disconnectBtn = document.getElementById('btn-sp-disconnect');
+  const pullBtn = document.getElementById('btn-sp-pull');
+  const pushBtn = document.getElementById('btn-sp-push');
+  disconnectBtn.style.display = url ? '' : 'none';
+  pullBtn.style.display = url ? '' : 'none';
+  pushBtn.style.display = url ? '' : 'none';
+  setSyncStatus(url ? (lastSyncAt ? 'Último sync ' + lastSyncAt.toLocaleTimeString('es-MX') : 'Conectado — sin sincronizar todavía en esta sesión') : 'No conectado a Google Sheets. Todo se guarda solo en este navegador.');
+}
+function openSettings(){
+  refreshSettingsPanel();
+  document.getElementById('settings-overlay').classList.add('show');
+}
+function closeSettings(){
+  document.getElementById('settings-overlay').classList.remove('show');
+}
+document.getElementById('btn-open-settings').addEventListener('click', openSettings);
+document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
+document.getElementById('settings-overlay').addEventListener('click', e=>{
+  if(e.target.id === 'settings-overlay') closeSettings();
+});
+document.getElementById('btn-sp-save-url').addEventListener('click', ()=>{
+  conectarSync(document.getElementById('sp-sync-url').value);
+});
+document.getElementById('btn-sp-pull').addEventListener('click', async ()=>{
+  const ok = await pullFromSheet(false);
+  if(ok) renderAll();
+  refreshSettingsPanel();
+});
+document.getElementById('btn-sp-push').addEventListener('click', async ()=>{
+  await pushToSheet(true);
+  refreshSettingsPanel();
+});
+document.getElementById('btn-sp-disconnect').addEventListener('click', ()=>{
+  if(!confirm('¿Desconectar la sincronización con Google Sheets? Tus datos seguirán guardados en este navegador.')) return;
+  localStorage.removeItem(SYNC_URL_KEY);
+  renderSyncFooter();
+  refreshSettingsPanel();
+});
+
+/* ============================= RESPALDO EN EXCEL ============================= */
+function stateToWorkbook(){
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.debts.map(d=>({
+    id:d.id, nombre:d.nombre, saldo:d.saldo, tasaAnual:d.tasaAnual, pagoMinimo:d.pagoMinimo,
+    pagoTotal:d.pagoTotal, prioridad:d.prioridad, diaPago:d.diaPago, tipo:d.tipo, notas:d.notas||'',
+    ultimoPagoOcurrencia:d.ultimoPagoOcurrencia||''
+  }))), 'Deudas');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.telefonia.map(t=>({
+    id:t.id, nombre:t.nombre, monto:t.monto, diaPago:t.diaPago, ultimoPagoOcurrencia:t.ultimoPagoOcurrencia||''
+  }))), 'Telefonia');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.personales.categorias), 'PersonalesCategorias');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.gastosLog), 'GastosLog');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.ingresosPersonales), 'IngresosPersonales');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.historial), 'Historial');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+    {clave:'presupuesto', valor: state.personales.presupuesto},
+    {clave:'ultimoPeriodo', valor: JSON.stringify(state.ultimoPeriodo||null)}
+  ]), 'Config');
+  return wb;
+}
+function exportExcel(){
+  const wb = stateToWorkbook();
+  XLSX.writeFile(wb, `control-deudas_${todayISO()}.xlsx`);
+  showToast('Respaldo descargado');
+}
+function sheetRows(wb, name){
+  const ws = wb.Sheets[name];
+  return ws ? XLSX.utils.sheet_to_json(ws, {defval:''}) : [];
+}
+function importExcel(file){
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+      const debts = sheetRows(wb,'Deudas').map(r=>({
+        id: r.id || uid('d'), nombre: r.nombre||'', saldo:Number(r.saldo)||0, tasaAnual:Number(r.tasaAnual)||0,
+        pagoMinimo:Number(r.pagoMinimo)||0, pagoTotal:Number(r.pagoTotal)||0, prioridad:Number(r.prioridad)||99,
+        diaPago:String(r.diaPago||''), tipo:r.tipo||'avalancha', notas:r.notas||'',
+        ultimoPagoOcurrencia:r.ultimoPagoOcurrencia||null
+      }));
+      const telefonia = sheetRows(wb,'Telefonia').map(r=>({
+        id:r.id||uid('t'), nombre:r.nombre||'', monto:Number(r.monto)||0,
+        diaPago:String(r.diaPago||''), ultimoPagoOcurrencia:r.ultimoPagoOcurrencia||null
+      }));
+      const categorias = sheetRows(wb,'PersonalesCategorias').map(r=>({nombre:r.nombre||'', monto:Number(r.monto)||0}));
+      const gastosLog = sheetRows(wb,'GastosLog').map(r=>({id:r.id||uid('g'), fecha:sliceISO(r.fecha), categoria:r.categoria||'', monto:Number(r.monto)||0, descripcion:r.descripcion||''}));
+      const ingresosPersonales = sheetRows(wb,'IngresosPersonales').map(r=>({id:r.id||uid('ip'), fecha:sliceISO(r.fecha), monto:Number(r.monto)||0, descripcion:r.descripcion||''}));
+      const historial = sheetRows(wb,'Historial').map(r=>({id:r.id||uid('h'), fecha:sliceISO(r.fecha), nombre:r.nombre||'', monto:Number(r.monto)||0, tipo:r.tipo||'avalancha'}));
+      const configRows = sheetRows(wb,'Config');
+      const cfg = {}; configRows.forEach(r=>{ cfg[r.clave]=r.valor; });
+      let ultimoPeriodo = null;
+      try{ ultimoPeriodo = cfg.ultimoPeriodo ? JSON.parse(cfg.ultimoPeriodo) : null; }catch(_e){ ultimoPeriodo = null; }
+
+      if(debts.length===0 && telefonia.length===0 && historial.length===0){
+        showToast('Ese archivo no parece tener datos reconocibles — no se importó nada');
+        return;
+      }
+      if(!confirm('Esto reemplazará TODOS los datos que tienes ahora en este navegador (deudas, historial, gastos, etc.) con lo que venga en el Excel. ¿Continuar?')) return;
+
+      state = normalizeFechas({
+        debts, telefonia,
+        personales: {presupuesto: Number(cfg.presupuesto)||0, categorias},
+        gastosLog, ingresosPersonales, historial, ultimoPeriodo
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      renderAll();
+      renderSyncFooter();
+      showToast('Datos restaurados desde Excel');
+      if(getSyncUrl() && confirm('¿Subir estos datos restaurados a tu Google Sheet conectada? Esto sobrescribirá lo que haya ahí.')){
+        pushToSheet(true);
+      }
+    }catch(err){
+      console.error(err);
+      showToast('No se pudo leer ese archivo — revisa que sea un Excel exportado por esta app');
+    }
   };
+  reader.readAsArrayBuffer(file);
 }
-function normalizeTelefonia(t){
-  return { id: t.id, nombre: t.nombre, monto: Number(t.monto) || 0, diaPago: normalizeDiaPago(t.diaPago), ultimoPagoOcurrencia: t.ultimoPagoOcurrencia || null };
+document.getElementById('btn-export-excel').addEventListener('click', exportExcel);
+document.getElementById('btn-import-excel').addEventListener('click', ()=>{
+  document.getElementById('in-import-excel').click();
+});
+document.getElementById('in-import-excel').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  if(file) importExcel(file);
+  e.target.value = '';
+});
+
+/* ============================= UTIL ============================= */
+const fmt = n => (n<0?'-$':'$') + Math.abs(Math.round(n)).toLocaleString('es-MX');
+const fmt2 = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
+// Campos de dinero editables: guardan/leen texto con comas de miles (formato es-MX).
+function parseMoneyInput(v){
+  if(typeof v !== 'string') return Number(v) || 0;
+  const cleaned = v.replace(/,/g, '').trim();
+  return parseFloat(cleaned) || 0;
 }
-function normalizeCategoria(c){
-  return { nombre: c.nombre, monto: Number(c.monto) || 0 };
+function formatMoneyInput(n){
+  return (Number(n) || 0).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
-function normalizeGasto(g){
-  return { id: g.id, fecha: g.fecha, categoria: g.categoria, monto: Number(g.monto) || 0, descripcion: g.descripcion || '' };
+function wireMoneyInputs(root){
+  root.querySelectorAll('input.money').forEach(inp=>{
+    inp.addEventListener('focus', ()=>{
+      const raw = parseMoneyInput(inp.value);
+      inp.value = raw ? String(raw) : '';
+    });
+    inp.addEventListener('blur', ()=>{
+      inp.value = formatMoneyInput(parseMoneyInput(inp.value));
+    });
+  });
 }
-function normalizeIngresoPersonal(i){
-  return { id: i.id, fecha: i.fecha, monto: Number(i.monto) || 0, descripcion: i.descripcion || '' };
+function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._h);
+  showToast._h = setTimeout(()=>t.classList.remove('show'), 2200);
 }
-function normalizeHistorial(h){
-  return { id: h.id, fecha: h.fecha, nombre: h.nombre, monto: Number(h.monto) || 0, tipo: h.tipo };
+function todayISO(){
+  const d = new Date();
+  return d.toISOString().slice(0,10);
+}
+function daysBetween(a,b){
+  return Math.round((new Date(b) - new Date(a)) / 86400000);
+}
+// diaPago admite un solo día ("17") o varios separados por coma ("15,30") para
+// cuotas que se cobran más de una vez al mes (ej. descuentos de nómina quincenales).
+function parseDiasPago(raw){
+  if(raw===null || raw===undefined || raw==='') return [];
+  return String(raw).split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n>=1 && n<=31);
+}
+// Próxima fecha (desde fromISO en adelante, inclusive) en que cae alguno de los días
+// de diaPago, saltando la ocurrencia ya marcada como pagada (ultimoPagoOcurrencia).
+function proximaFechaPago(diaPago, fromISO, ultimoPagoOcurrencia){
+  const dias = parseDiasPago(diaPago);
+  if(!dias.length) return null;
+  let cursor = new Date(fromISO+'T00:00:00');
+  for(let i=0;i<400;i++){
+    if(dias.includes(cursor.getDate())){
+      const iso = cursor.toISOString().slice(0,10);
+      if(iso !== ultimoPagoOcurrencia) return iso;
+    }
+    cursor.setDate(cursor.getDate()+1);
+  }
+  return null;
+}
+function diasFaltantes(diaPago, fromISO, ultimoPagoOcurrencia){
+  const prox = proximaFechaPago(diaPago, fromISO, ultimoPagoOcurrencia);
+  if(!prox) return null;
+  return daysBetween(fromISO, prox);
+}
+function tagDiasFaltantes(dias){
+  if(dias===null) return '';
+  let cls = 'neutral';
+  let label = `en ${dias} día${dias===1?'':'s'}`;
+  if(dias<=0){ cls='danger'; label='vence hoy'; }
+  else if(dias<=3){ cls='warn'; }
+  return `<span class="tag ${cls}">${label}</span>`;
 }
 
-function doGet(e){
-  const cfg = readConfig();
-  const state = {
-    debts: readTable(SHEETS.debts).map(normalizeDebt),
-    telefonia: readTable(SHEETS.telefonia).map(normalizeTelefonia),
-    personales: {
-      presupuesto: Number(cfg.presupuesto) || 0,
-      categorias: readTable(SHEETS.categorias).map(normalizeCategoria)
-    },
-    gastosLog: readTable(SHEETS.gastosLog).map(normalizeGasto),
-    ingresosPersonales: readTable(SHEETS.ingresosPersonales).map(normalizeIngresoPersonal),
-    historial: readTable(SHEETS.historial).map(normalizeHistorial),
-    ultimoPeriodo: cfg.ultimoPeriodo ? JSON.parse(cfg.ultimoPeriodo) : null
-  };
-  return ContentService.createTextOutput(JSON.stringify(state)).setMimeType(ContentService.MimeType.JSON);
+/* ============================= NAV ============================= */
+document.getElementById('tabs').addEventListener('click', e=>{
+  const btn = e.target.closest('button[data-view]');
+  if(!btn) return;
+  document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('section.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+btn.dataset.view).classList.add('active');
+  renderAll();
+});
+
+/* ============================= RENDER: HOY ============================= */
+function renderHoy(){
+  const el = document.getElementById('view-hoy');
+  const last = state.ultimoPeriodo || {};
+  const fechaHoy = last.fecha || todayISO();
+  const ingreso = last.ingreso ?? '';
+  const dias = last.dias ?? 14;
+  const apartado = last.apartado ?? '';
+
+  el.innerHTML = `
+    <div class="hero">
+      <div class="bigdate">¿Qué necesito pagar hoy?</div>
+      <div class="inputs">
+        <div class="field"><label>Fecha en que cobraste</label><input type="date" id="in-fecha" value="${fechaHoy}"></div>
+        <div class="field"><label>Ingreso recibido</label><input type="text" inputmode="decimal" class="money" id="in-ingreso" placeholder="0.00" value="${ingreso!==''?formatMoneyInput(ingreso):''}"></div>
+        <div class="field"><label>Días hasta tu próximo cobro</label><input type="number" id="in-dias" value="${dias}"></div>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>De ese ingreso, ¿cuánto apartas para gastos personales (no para deudas)?</label>
+        <input type="text" inputmode="decimal" class="money" id="in-apartado" placeholder="0.00" value="${apartado!==''?formatMoneyInput(apartado):''}">
+      </div>
+      <div style="font-size:11.5px;color:var(--ink-soft);margin-top:-6px;margin-bottom:10px;">Ese monto no entra al cálculo de deudas de abajo — se guarda como saldo personal en "Registro de gastos" cuando confirmes.</div>
+      <button class="btn" id="btn-calcular">Calcular</button>
+    </div>
+    <div id="resultado"></div>
+  `;
+  wireMoneyInputs(el);
+  document.getElementById('btn-calcular').addEventListener('click', calcularHoy);
+  if(last.fecha && last.ingreso){
+    calcularHoy();
+  }
 }
 
-function doPost(e){
-  const body = JSON.parse(e.postData.contents);
+function calcularHoy(){
+  const fecha = document.getElementById('in-fecha').value;
+  const ingresoBruto = parseMoneyInput(document.getElementById('in-ingreso').value);
+  const dias = parseInt(document.getElementById('in-dias').value) || 14;
+  const apartado = parseMoneyInput(document.getElementById('in-apartado').value);
+  const ingreso = Math.max(0, ingresoBruto - apartado);
+  if(!fecha){ showToast('Pon una fecha'); return; }
+  const fin = new Date(fecha+'T00:00:00');
+  fin.setDate(fin.getDate()+dias);
+  const finISO = fin.toISOString().slice(0,10);
 
-  writeTable(SHEETS.debts, body.debts || []);
-  writeTable(SHEETS.telefonia, body.telefonia || []);
-  writeTable(SHEETS.categorias, (body.personales && body.personales.categorias) || []);
-  writeTable(SHEETS.gastosLog, body.gastosLog || []);
-  writeTable(SHEETS.ingresosPersonales, body.ingresosPersonales || []);
-  writeTable(SHEETS.historial, body.historial || []);
-  writeConfig({
-    presupuesto: (body.personales && body.personales.presupuesto) || 0,
-    ultimoPeriodo: JSON.stringify(body.ultimoPeriodo || null)
+  state.ultimoPeriodo = {fecha, ingreso: ingresoBruto, dias, apartado};
+  saveData();
+
+  // obligaciones fijas (telefonia + deudas tipo fijo) que caen en el rango y no se han pagado ya para esta ocurrencia
+  const dueFixed = [];
+  state.telefonia.forEach(t=>{
+    const ocurrencia = proximaFechaPago(t.diaPago, fecha, t.ultimoPagoOcurrencia);
+    if(ocurrencia && ocurrencia < finISO){
+      dueFixed.push({id:t.id, origen:'telefonia', nombre:t.nombre, monto:t.monto, obligatorio:true, ocurrencia});
+    }
+  });
+  state.debts.filter(d=>d.tipo==='fijo' && d.saldo>0).forEach(d=>{
+    const ocurrencia = proximaFechaPago(d.diaPago, fecha, d.ultimoPagoOcurrencia);
+    if(ocurrencia && ocurrencia < finISO){
+      dueFixed.push({id:d.id, origen:'debt-fijo', nombre:d.nombre, monto:d.pagoTotal, obligatorio:true, ocurrencia});
+    }
   });
 
-  return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+  // deudas avalancha que caen en el rango y no se han pagado ya para esta ocurrencia
+  const dueAvalanche = [];
+  state.debts.filter(d=>d.tipo==='avalancha' && d.saldo>0).forEach(d=>{
+    const ocurrencia = proximaFechaPago(d.diaPago, fecha, d.ultimoPagoOcurrencia);
+    if(ocurrencia && ocurrencia < finISO){
+      dueAvalanche.push(Object.assign({}, d, {ocurrencia}));
+    }
+  });
+
+  const resultado = document.getElementById('resultado');
+  let html = '';
+
+  if(dueFixed.length===0 && dueAvalanche.length===0 && apartado<=0){
+    html += `<div class="card"><div class="empty-msg">No hay pagos con fecha dentro de este rango. Aun así, considera separar tu presupuesto de gastos personales.</div></div>`;
+  } else {
+    html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas — no se pueden recortar.</div>`;
+    if(dueFixed.length){
+      dueFixed.forEach(item=>{
+        html += `<div class="due-item"><input type="checkbox" checked disabled><div class="name">${item.nombre}</div><div class="amt-out">${fmt2(item.monto)}</div></div>`;
+      });
+    } else {
+      html += `<div class="empty-msg">Ninguno esta vez.</div>`;
+    }
+    html += `</div><hr class="rule">`;
+
+    html += `<div class="card"><div class="section-title">Tarjetas con fecha en este periodo</div><div class="section-desc">Elige mínimo o completo para cada una — esto afecta cuánto te queda para la avalancha.</div>`;
+    if(dueAvalanche.length){
+      dueAvalanche.sort((a,b)=>a.prioridad-b.prioridad);
+      dueAvalanche.forEach(d=>{
+        html += `
+        <div class="due-item">
+          <input type="checkbox" class="chk-avalanche" data-id="${d.id}" checked>
+          <div class="name">${d.nombre} <span class="meta">· ${d.tasaAnual}% anual</span></div>
+          <select class="sel-estrategia" data-id="${d.id}">
+            <option value="minimo">Mínimo ${fmt2(d.pagoMinimo)}</option>
+            <option value="completo">Completo ${fmt2(d.pagoTotal)}</option>
+          </select>
+          <div class="amt-out" id="amt-${d.id}">${fmt2(d.pagoMinimo)}</div>
+        </div>`;
+      });
+    } else {
+      html += `<div class="empty-msg">Ninguna esta vez.</div>`;
+    }
+    html += `</div>`;
+
+    html += `<div class="card" style="margin-top:16px;"><div class="section-title">Gastos personales de este periodo</div>
+      <div class="due-item"><input type="checkbox" checked disabled><div class="name">Presupuesto (${dias} días)</div><div class="amt-out" id="amt-personales"></div></div>
+      </div>`;
+
+    html += `<div id="caja-resultado"></div>`;
+  }
+  resultado.innerHTML = html;
+
+  // wire up recalculation on toggle/select change
+  resultado.querySelectorAll('.chk-avalanche, .sel-estrategia').forEach(elm=>{
+    elm.addEventListener('change', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado));
+  });
+  if(dueFixed.length || dueAvalanche.length || apartado>0) recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado);
 }
+
+function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
+  let totalFijo = dueFixed.reduce((s,i)=>s+i.monto,0);
+  let totalAvalancheSeleccionado = 0;
+  const seleccionAvalancheDetalle = [];
+
+  dueAvalanche.forEach(d=>{
+    const chk = document.querySelector(`.chk-avalanche[data-id="${d.id}"]`);
+    const sel = document.querySelector(`.sel-estrategia[data-id="${d.id}"]`);
+    if(!chk || !chk.checked) return;
+    const monto = sel.value==='completo' ? d.pagoTotal : d.pagoMinimo;
+    document.getElementById('amt-'+d.id).textContent = fmt2(monto);
+    totalAvalancheSeleccionado += monto;
+    seleccionAvalancheDetalle.push({id:d.id, nombre:d.nombre, monto, ocurrencia:d.ocurrencia});
+  });
+
+  const presupuestoPersonal = state.personales.presupuesto * (dias/30);
+  const amtPersonalesEl = document.getElementById('amt-personales');
+  if(amtPersonalesEl) amtPersonalesEl.textContent = fmt2(presupuestoPersonal);
+
+  const totalNecesario = totalFijo + totalAvalancheSeleccionado + presupuestoPersonal;
+  const sobrante = ingreso - totalNecesario;
+
+  const cajaEl = document.getElementById('caja-resultado');
+  if(!cajaEl) return;
+
+  let html = `<div class="receipt">
+    <div class="line"><span>Ingreso para deudas (ya sin el apartado personal)</span><span class="amt">${fmt2(ingreso)}</span></div>
+    ${apartado>0?`<div class="line"><span>Apartado para gastos personales</span><span class="amt">${fmt2(apartado)}</span></div>`:''}
+    <div class="line"><span>Pagos obligatorios (servicios y cuotas fijas)</span><span class="amt">${fmt2(totalFijo)}</span></div>
+    <div class="line"><span>Tarjetas seleccionadas</span><span class="amt">${fmt2(totalAvalancheSeleccionado)}</span></div>
+    <div class="line"><span>Gastos personales (proporcional)</span><span class="amt">${fmt2(presupuestoPersonal)}</span></div>
+    <div class="line total"><span>${sobrante>=0?'Sobrante':'Faltante'}</span><span class="amt">${fmt2(sobrante)}</span></div>
+  </div>`;
+
+  const activos = state.debts.filter(d=>d.tipo==='avalancha' && d.saldo>0).sort((a,b)=>a.prioridad-b.prioridad);
+  const objetivo = activos[0];
+
+  if(sobrante > 0 && objetivo){
+    html += `<div class="avalanche-box">
+      <div class="headline">Manda el sobrante a: ${objetivo.nombre}</div>
+      <div style="font-size:13.5px;">Es tu deuda de mayor tasa activa (${objetivo.tasaAnual}% anual). Pago extra sugerido: <strong>${fmt2(sobrante)}</strong>, además de lo que ya le corresponde este periodo.</div>
+    </div>`;
+  } else if(sobrante <=0){
+    html += `<div class="deficit-box">
+      <div class="headline">No alcanza este periodo</div>
+      <div style="font-size:13.5px;">Faltan ${fmt2(Math.abs(sobrante))}. Antes de recortar, revisa si alguna tarjeta puede pasar de "completo" a "mínimo" arriba.</div>
+    </div>`;
+  }
+
+  html += `<div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;">
+    <button class="btn" id="btn-confirmar-pago">Registrar estos pagos</button>
+  </div>`;
+
+  cajaEl.innerHTML = html;
+  cajaEl.dataset.payload = JSON.stringify({dueFixed, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
+  document.getElementById('btn-confirmar-pago').addEventListener('click', ()=>confirmarPago(cajaEl));
+}
+
+function confirmarPago(cajaEl){
+  const payload = JSON.parse(cajaEl.dataset.payload || '{}');
+  const fecha = document.getElementById('in-fecha').value;
+  const entries = [];
+
+  (payload.dueFixed||[]).forEach(item=>{
+    entries.push({fecha, nombre:item.nombre, monto:item.monto, tipo:'fijo'});
+    if(item.origen === 'debt-fijo'){
+      const d = state.debts.find(x=>x.id===item.id);
+      if(d){
+        d.saldo = Math.max(0, d.saldo - item.monto);
+        if(item.ocurrencia) d.ultimoPagoOcurrencia = item.ocurrencia;
+      }
+    } else if(item.origen === 'telefonia'){
+      const t = state.telefonia.find(x=>x.id===item.id);
+      if(t && item.ocurrencia) t.ultimoPagoOcurrencia = item.ocurrencia;
+    }
+  });
+
+  (payload.seleccionAvalancheDetalle||[]).forEach(sel=>{
+    const d = state.debts.find(x=>x.id===sel.id);
+    let montoAplicado = sel.monto;
+    if(payload.objetivo === sel.id && payload.sobrante>0){
+      montoAplicado += payload.sobrante;
+    }
+    if(d){
+      d.saldo = Math.max(0, d.saldo - montoAplicado);
+      if(sel.ocurrencia) d.ultimoPagoOcurrencia = sel.ocurrencia;
+    }
+    entries.push({fecha, nombre: d?d.nombre:sel.nombre, monto: montoAplicado, tipo:'avalancha'});
+  });
+
+  state.historial.unshift(...entries.map(e=>({...e, id:uid('h')})));
+
+  if(payload.apartado > 0){
+    state.ingresosPersonales.unshift({id:uid('ip'), fecha, monto:payload.apartado, descripcion:'Apartado desde ingreso del '+fecha});
+  }
+
+  saveData();
+  showToast('Pagos registrados y saldos actualizados');
+  renderAll();
+}
+
+/* ============================= RENDER: DEUDAS ============================= */
+function renderDeudas(){
+  const el = document.getElementById('view-deudas');
+  const activas = state.debts.filter(d=>d.tipo==='avalancha').sort((a,b)=>a.prioridad-b.prioridad);
+  const fijas = state.debts.filter(d=>d.tipo==='fijo');
+  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
+
+  let rows = activas.map(d=>`
+    <tr>
+      <td><span class="priority-pill">${d.prioridad}</span></td>
+      <td><input type="text" data-field="nombre" data-id="${d.id}" value="${d.nombre}" style="font-weight:600;"></td>
+      <td><input type="text" inputmode="decimal" data-field="saldo" data-id="${d.id}" value="${formatMoneyInput(d.saldo)}" class="num money"></td>
+      <td><input type="number" step="0.01" data-field="tasaAnual" data-id="${d.id}" value="${d.tasaAnual}" class="num" style="width:70px;"></td>
+      <td class="num">${(d.tasaAnual/12).toFixed(2)}%</td>
+      <td><input type="text" inputmode="decimal" data-field="pagoMinimo" data-id="${d.id}" value="${formatMoneyInput(d.pagoMinimo)}" class="num money"></td>
+      <td><input type="text" inputmode="decimal" data-field="pagoTotal" data-id="${d.id}" value="${formatMoneyInput(d.pagoTotal)}" class="num money"></td>
+      <td><input type="text" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:64px;" placeholder="17 o 15,30"></td>
+      <td>${tagDiasFaltantes(diasFaltantes(d.diaPago, ref, d.ultimoPagoOcurrencia))}</td>
+      <td><button class="icon-btn" data-action="del" data-id="${d.id}" title="Eliminar">✕</button></td>
+    </tr>
+    ${d.notas?`<tr><td></td><td colspan="9" style="color:var(--ink-soft);font-size:12.5px;padding-top:0;">${d.notas}</td></tr>`:''}
+  `).join('');
+
+  let rowsFijas = fijas.map(d=>`
+    <tr>
+      <td><input type="text" data-field="nombre" data-id="${d.id}" value="${d.nombre}" style="font-weight:600;"></td>
+      <td><input type="text" inputmode="decimal" data-field="saldo" data-id="${d.id}" value="${formatMoneyInput(d.saldo)}" class="num money"></td>
+      <td><input type="number" step="0.01" data-field="tasaAnual" data-id="${d.id}" value="${d.tasaAnual}" class="num" style="width:70px;"></td>
+      <td><input type="text" inputmode="decimal" data-field="pagoTotal" data-id="${d.id}" value="${formatMoneyInput(d.pagoTotal)}" class="num money"></td>
+      <td><input type="text" data-field="diaPago" data-id="${d.id}" value="${d.diaPago}" class="num" style="width:64px;" placeholder="17 o 15,30"></td>
+      <td>${tagDiasFaltantes(diasFaltantes(d.diaPago, ref, d.ultimoPagoOcurrencia))}</td>
+      <td><button class="icon-btn" data-action="del" data-id="${d.id}" title="Eliminar">✕</button></td>
+    </tr>
+    ${d.notas?`<tr><td></td><td colspan="6" style="color:var(--ink-soft);font-size:12.5px;padding-top:0;">${d.notas}</td></tr>`:''}
+  `).join('');
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="section-title">Orden de avalancha</div>
+      <div class="section-desc">Ordenadas de mayor a menor tasa. Todo es editable — cambia saldos y mínimos cuando llegue un estado de cuenta nuevo. La prioridad se puede reacomodar arrastrando el número si liquidas alguna.</div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>#</th><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Tasa mensual</th><th>Pago mínimo</th><th>Pago completo</th><th>Día de pago</th><th>Próximo pago</th><th></th></tr></thead>
+        <tbody id="tbody-avalancha">${rows || '<tr><td colspan="10" class="empty-msg">Sin deudas activas — ¡bien hecho!</td></tr>'}</tbody>
+      </table></div>
+      <button class="btn secondary small" id="btn-add-avalancha" style="margin-top:14px;">+ Agregar deuda</button>
+    </div>
+
+    <hr class="rule">
+
+    <div class="card">
+      <div class="section-title">Cuotas fijas (fuera de la avalancha)</div>
+      <div class="section-desc">Préstamos a 0%/tasa fija o a meses sin intereses. No compiten por el pago extra: pagarlas de más no ahorra nada. En "Día de pago" puedes poner un solo día (17) o varios separados por coma (15,30) si se descuenta más de una vez al mes.</div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Deuda</th><th>Saldo</th><th>Tasa anual</th><th>Pago fijo</th><th>Día de pago</th><th>Próximo pago</th><th></th></tr></thead>
+        <tbody id="tbody-fijas">${rowsFijas || '<tr><td colspan="6" class="empty-msg">Nada aquí.</td></tr>'}</tbody>
+      </table></div>
+      <button class="btn secondary small" id="btn-add-fija" style="margin-top:14px;">+ Agregar cuota fija</button>
+    </div>
+  `;
+
+  el.querySelectorAll('input[data-field]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const d = state.debts.find(x=>x.id===inp.dataset.id);
+      if(!d) return;
+      const field = inp.dataset.field;
+      d[field] = (field==='nombre' || field==='diaPago') ? inp.value.trim() : parseMoneyInput(inp.value);
+      saveData();
+      if(field==='tasaAnual'){ renderDeudas(); } // refresh monthly rate col
+    });
+  });
+  wireMoneyInputs(el);
+  el.querySelectorAll('button[data-action="del"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!confirm('¿Eliminar esta deuda? (Úsalo solo si ya la liquidaste o fue un error)')) return;
+      state.debts = state.debts.filter(x=>x.id!==btn.dataset.id);
+      saveData(); renderDeudas();
+    });
+  });
+  document.getElementById('btn-add-avalancha').addEventListener('click', ()=>{
+    const maxP = Math.max(0, ...state.debts.filter(d=>d.tipo==='avalancha').map(d=>d.prioridad));
+    state.debts.push({id:uid('d'), nombre:'Nueva deuda', saldo:0, tasaAnual:0, pagoMinimo:0, pagoTotal:0, prioridad:maxP+1, diaPago:1, tipo:'avalancha', notas:''});
+    saveData(); renderDeudas();
+  });
+  document.getElementById('btn-add-fija').addEventListener('click', ()=>{
+    state.debts.push({id:uid('d'), nombre:'Nueva cuota fija', saldo:0, tasaAnual:0, pagoMinimo:0, pagoTotal:0, prioridad:99, diaPago:1, tipo:'fijo', notas:''});
+    saveData(); renderDeudas();
+  });
+}
+
+/* ============================= RENDER: TELEFONIA ============================= */
+function renderTelefonia(){
+  const el = document.getElementById('view-telefonia');
+  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
+  let rows = state.telefonia.map(t=>`
+    <tr>
+      <td><input type="text" data-field="nombre" data-id="${t.id}" value="${t.nombre}" style="font-weight:600;"></td>
+      <td><input type="text" inputmode="decimal" data-field="monto" data-id="${t.id}" value="${formatMoneyInput(t.monto)}" class="num money"></td>
+      <td><input type="text" data-field="diaPago" data-id="${t.id}" value="${t.diaPago}" class="num" style="width:64px;" placeholder="17 o 15,30"></td>
+      <td>${tagDiasFaltantes(diasFaltantes(t.diaPago, ref, t.ultimoPagoOcurrencia))}</td>
+      <td><button class="icon-btn" data-action="del" data-id="${t.id}">✕</button></td>
+    </tr>`).join('');
+  const total = state.telefonia.reduce((s,t)=>s+t.monto,0);
+  el.innerHTML = `
+    <div class="card">
+      <div class="section-title">Planes telefónicos</div>
+      <div class="section-desc">Estos siguen pagándose siempre, completos, sin excepción.</div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Línea</th><th>Monto mensual</th><th>Día de pago</th><th>Próximo pago</th><th></th></tr></thead>
+        <tbody id="tbody-tel">${rows || '<tr><td colspan="5" class="empty-msg">Sin líneas registradas.</td></tr>'}</tbody>
+      </table></div>
+      <div class="row-flex" style="margin-top:14px;">
+        <button class="btn secondary small" id="btn-add-tel">+ Agregar línea</button>
+        <div class="num" style="font-weight:600;">Total mensual: ${fmt2(total)}</div>
+      </div>
+    </div>
+  `;
+  el.querySelectorAll('input[data-field]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const t = state.telefonia.find(x=>x.id===inp.dataset.id);
+      if(!t) return;
+      t[inp.dataset.field] = (inp.dataset.field==='nombre' || inp.dataset.field==='diaPago') ? inp.value.trim() : parseMoneyInput(inp.value);
+      saveData(); renderTelefonia();
+    });
+  });
+  wireMoneyInputs(el);
+  el.querySelectorAll('button[data-action="del"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.telefonia = state.telefonia.filter(x=>x.id!==btn.dataset.id);
+      saveData(); renderTelefonia();
+    });
+  });
+  document.getElementById('btn-add-tel').addEventListener('click', ()=>{
+    state.telefonia.push({id:uid('t'), nombre:'Nueva línea', monto:0, diaPago:1});
+    saveData(); renderTelefonia();
+  });
+}
+
+/* ============================= RENDER: PERSONALES ============================= */
+function renderPersonales(){
+  const el = document.getElementById('view-personales');
+  const p = state.personales;
+  const sumaCat = p.categorias.reduce((s,c)=>s+c.monto,0);
+
+  const mesActual = todayISO().slice(0,7);
+  const gastadoMes = state.gastosLog.filter(g=>g.fecha.slice(0,7)===mesActual && g.categoria!=='avalancha-extra').reduce((s,g)=>s+g.monto,0);
+
+  let rows = p.categorias.map((c,i)=>`
+    <tr>
+      <td><input type="text" data-idx="${i}" data-field="nombre" value="${c.nombre}" style="font-weight:600;"></td>
+      <td><input type="text" inputmode="decimal" data-idx="${i}" data-field="monto" value="${formatMoneyInput(c.monto)}" class="num money"></td>
+      <td><button class="icon-btn" data-action="del-cat" data-idx="${i}">✕</button></td>
+    </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="section-title">Presupuesto de gastos personales</div>
+      <div class="section-desc">Este monto se descuenta proporcional a los días del periodo en la pestaña "Hoy".</div>
+      <div class="field" style="max-width:220px;"><label>Presupuesto mensual total</label><input type="text" inputmode="decimal" id="in-presupuesto" value="${formatMoneyInput(p.presupuesto)}" class="num money"></div>
+      <hr class="rule">
+      <div class="section-title" style="font-size:15px;">Desglose (referencia)</div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Categoría</th><th>Monto</th><th></th></tr></thead>
+        <tbody id="tbody-cat">${rows}</tbody>
+      </table></div>
+      <div class="row-flex" style="margin-top:12px;">
+        <button class="btn secondary small" id="btn-add-cat">+ Agregar categoría</button>
+        <div class="num" style="font-weight:600; color:${sumaCat>p.presupuesto?'var(--danger)':'var(--ink)'}">Suma categorías: ${fmt2(sumaCat)} / ${fmt2(p.presupuesto)}</div>
+      </div>
+    </div>
+    <hr class="rule">
+    <div class="stat" style="max-width:320px;">
+      <div class="label">Gastado este mes (según Registro de gastos)</div>
+      <div class="value" style="color:${gastadoMes>p.presupuesto?'var(--danger)':'var(--good)'}">${fmt2(gastadoMes)}</div>
+    </div>
+  `;
+
+  document.getElementById('in-presupuesto').addEventListener('change', e=>{
+    p.presupuesto = parseMoneyInput(e.target.value);
+    saveData(); renderPersonales();
+  });
+  el.querySelectorAll('input[data-field]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const idx = parseInt(inp.dataset.idx);
+      p.categorias[idx][inp.dataset.field] = (inp.dataset.field==='nombre')?inp.value:parseMoneyInput(inp.value);
+      saveData(); renderPersonales();
+    });
+  });
+  wireMoneyInputs(el);
+  el.querySelectorAll('button[data-action="del-cat"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      p.categorias.splice(parseInt(btn.dataset.idx),1);
+      saveData(); renderPersonales();
+    });
+  });
+  document.getElementById('btn-add-cat').addEventListener('click', ()=>{
+    p.categorias.push({nombre:'Nueva categoría', monto:0});
+    saveData(); renderPersonales();
+  });
+}
+
+/* ============================= RENDER: REGISTRO DE GASTOS ============================= */
+function renderRegistro(){
+  const el = document.getElementById('view-registro');
+  const cats = state.personales.categorias.map(c=>c.nombre);
+
+  const totalIngresosPersonales = state.ingresosPersonales.reduce((s,i)=>s+i.monto,0);
+  const totalGastado = state.gastosLog.reduce((s,g)=>s+g.monto,0);
+  const saldoPersonal = totalIngresosPersonales - totalGastado;
+
+  const filasIngresos = state.ingresosPersonales.slice(0,30).map(i=>`
+    <tr>
+      <td class="num">${i.fecha}</td>
+      <td>${i.descripcion||'Ingreso personal'}</td>
+      <td class="num" style="text-align:right;color:var(--good);">+${fmt2(i.monto)}</td>
+      <td><button class="icon-btn" data-action="del-ingreso" data-id="${i.id}">✕</button></td>
+    </tr>
+  `).join('');
+
+  const porCategoria = {};
+  state.gastosLog.forEach(g=>{
+    porCategoria[g.categoria] = (porCategoria[g.categoria]||0) + g.monto;
+  });
+  const maxCat = Math.max(1, ...Object.values(porCategoria));
+
+  const filas = state.gastosLog.slice(0,60).map(g=>`
+    <tr>
+      <td class="num">${g.fecha}</td>
+      <td>${g.categoria}</td>
+      <td>${g.descripcion||''}</td>
+      <td class="num" style="text-align:right;">${fmt2(g.monto)}</td>
+      <td><button class="icon-btn" data-action="del-gasto" data-id="${g.id}">✕</button></td>
+    </tr>
+  `).join('');
+
+  el.innerHTML = `
+    <div class="card" style="border-color:var(--good);">
+      <div class="section-title">Saldo personal disponible</div>
+      <div class="section-desc">Dinero que decidiste que NO es para pagar deudas — es aparte, para gasto diario. Se acumula con lo que apartes en la pestaña "Hoy" o registres aquí como ingreso personal, y baja con lo que captures como gasto abajo.</div>
+      <div class="stat" style="max-width:280px;border-color:var(--good);">
+        <div class="label">Saldo disponible ahora</div>
+        <div class="value" style="color:${saldoPersonal<0?'var(--danger)':'var(--good)'}">${fmt2(saldoPersonal)}</div>
+      </div>
+      <hr class="rule">
+      <div class="grid3">
+        <div class="field"><label>Fecha</label><input type="date" id="ip-fecha" value="${todayISO()}"></div>
+        <div class="field"><label>Monto</label><input type="text" inputmode="decimal" class="money" id="ip-monto" placeholder="0.00"></div>
+        <div class="field"><label>Descripción (opcional)</label><input type="text" id="ip-desc" placeholder="ej. venta, propina, extra del negocio..."></div>
+      </div>
+      <button class="btn secondary" id="btn-add-ingreso">+ Agregar ingreso personal</button>
+      ${state.ingresosPersonales.length ? `
+      <hr class="rule">
+      <div class="table-scroll"><table>
+        <thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right;">Monto</th><th></th></tr></thead>
+        <tbody>${filasIngresos}</tbody>
+      </table></div>` : ''}
+    </div>
+
+    <hr class="rule">
+
+    <div class="card">
+      <div class="section-title">Capturar un gasto</div>
+      <div class="section-desc">Aquí va cualquier gasto que no sea deuda ni renta fija — para ver en qué se te va el dinero. Si lo pagaste con tu saldo personal, esto lo descuenta arriba.</div>
+      <div class="grid3">
+        <div class="field"><label>Fecha</label><input type="date" id="g-fecha" value="${todayISO()}"></div>
+        <div class="field"><label>Categoría</label>
+          <select id="g-categoria">${cats.map(c=>`<option>${c}</option>`).join('')}<option>Otro</option></select>
+        </div>
+        <div class="field"><label>Monto</label><input type="text" inputmode="decimal" class="money" id="g-monto" placeholder="0.00"></div>
+      </div>
+      <div class="field"><label>Descripción (opcional)</label><input type="text" id="g-desc" placeholder="ej. súper, gasolina..."></div>
+      <button class="btn" id="btn-add-gasto">Guardar gasto</button>
+    </div>
+
+    <hr class="rule">
+
+    <div class="card">
+      <div class="section-title">Fuga de dinero por categoría</div>
+      <div class="section-desc">Suma histórica de lo capturado — te ayuda a ver dónde se concentra el gasto.</div>
+      ${Object.keys(porCategoria).length? Object.entries(porCategoria).sort((a,b)=>b[1]-a[1]).map(([cat,total])=>`
+        <div class="category-bar">
+          <div class="cname">${cat}</div>
+          <div class="track"><div class="fill" style="width:${(total/maxCat*100).toFixed(0)}%"></div></div>
+          <div class="camt">${fmt2(total)}</div>
+        </div>
+      `).join('') : '<div class="empty-msg">Aún no capturas gastos.</div>'}
+    </div>
+
+    <hr class="rule">
+
+    <div class="card">
+      <div class="section-title">Movimientos recientes</div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th style="text-align:right;">Monto</th><th></th></tr></thead>
+        <tbody>${filas || '<tr><td colspan="5" class="empty-msg">Sin movimientos.</td></tr>'}</tbody>
+      </table></div>
+    </div>
+  `;
+
+  wireMoneyInputs(el);
+
+  document.getElementById('btn-add-ingreso').addEventListener('click', ()=>{
+    const fecha = document.getElementById('ip-fecha').value;
+    const monto = parseMoneyInput(document.getElementById('ip-monto').value);
+    const descripcion = document.getElementById('ip-desc').value;
+    if(!fecha || !monto){ showToast('Falta fecha o monto'); return; }
+    state.ingresosPersonales.unshift({id:uid('ip'), fecha, monto, descripcion});
+    saveData();
+    showToast('Ingreso personal agregado');
+    renderRegistro();
+  });
+  el.querySelectorAll('button[data-action="del-ingreso"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.ingresosPersonales = state.ingresosPersonales.filter(x=>x.id!==btn.dataset.id);
+      saveData(); renderRegistro();
+    });
+  });
+
+  document.getElementById('btn-add-gasto').addEventListener('click', ()=>{
+    const fecha = document.getElementById('g-fecha').value;
+    const categoria = document.getElementById('g-categoria').value;
+    const monto = parseMoneyInput(document.getElementById('g-monto').value);
+    const descripcion = document.getElementById('g-desc').value;
+    if(!fecha || !monto){ showToast('Falta fecha o monto'); return; }
+    state.gastosLog.unshift({id:uid('g'), fecha, categoria, monto, descripcion});
+    saveData();
+    showToast('Gasto guardado');
+    renderRegistro();
+  });
+  el.querySelectorAll('button[data-action="del-gasto"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.gastosLog = state.gastosLog.filter(x=>x.id!==btn.dataset.id);
+      saveData(); renderRegistro();
+    });
+  });
+}
+
+/* ============================= RENDER: HISTORIAL ============================= */
+function renderHistorial(){
+  const el = document.getElementById('view-historial');
+  const filas = state.historial.slice(0,100).map(h=>`
+    <tr>
+      <td class="num">${h.fecha}</td>
+      <td>${h.nombre}</td>
+      <td><span class="tag ${h.tipo==='avalancha'?'good':'neutral'}">${h.tipo==='avalancha'?'Avalancha':'Fijo'}</span></td>
+      <td class="num" style="text-align:right;">${fmt2(h.monto)}</td>
+    </tr>
+  `).join('');
+  const totalPagado = state.historial.reduce((s,h)=>s+h.monto,0);
+  el.innerHTML = `
+    <div class="card">
+      <div class="section-title">Historial de pagos registrados</div>
+      <div class="section-desc">Se llena automáticamente cuando confirmas pagos desde la pestaña "Hoy".</div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Fecha</th><th>Concepto</th><th>Tipo</th><th style="text-align:right;">Monto</th></tr></thead>
+        <tbody>${filas || '<tr><td colspan="4" class="empty-msg">Aún no registras pagos.</td></tr>'}</tbody>
+      </table></div>
+      <div class="row-flex" style="margin-top:14px;">
+        <span></span>
+        <div class="num" style="font-weight:600;">Total histórico: ${fmt2(totalPagado)}</div>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================= INIT ============================= */
+function renderAll(){
+  renderHoy();
+  renderDeudas();
+  renderTelefonia();
+  renderPersonales();
+  renderRegistro();
+  renderHistorial();
+}
+
+async function init(){
+  if(getSyncUrl()){
+    await pullFromSheet(true);
+  }
+  renderAll();
+  renderSyncFooter();
+}
+init();
+</script>
+</body>
+</html>
