@@ -723,7 +723,7 @@ function renderDeudas(){
   const el = document.getElementById('view-deudas');
   const activas = state.debts.filter(d=>d.tipo==='avalancha').sort((a,b)=>a.prioridad-b.prioridad);
   const fijas = state.debts.filter(d=>d.tipo==='fijo');
-  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
+  const ref = todayISO(); // "próximo pago" siempre se cuenta desde hoy de verdad, no desde la última fecha capturada en Hoy
 
   let rows = activas.map(d=>`
     <tr>
@@ -810,7 +810,7 @@ function renderDeudas(){
 /* ============================= RENDER: TELEFONIA ============================= */
 function renderTelefonia(){
   const el = document.getElementById('view-telefonia');
-  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
+  const ref = todayISO(); // "próximo pago" siempre se cuenta desde hoy de verdad, no desde la última fecha capturada en Hoy
   let rows = state.telefonia.map(t=>`
     <tr>
       <td><input type="text" data-field="nombre" data-id="${t.id}" value="${t.nombre}" style="font-weight:600;"></td>
