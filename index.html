@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   --bg:#FAF8F4;
@@ -163,6 +164,28 @@ tr:last-child td{border-bottom:none;}
 footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 0 10px;}
 .table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
 .table-scroll table{min-width:640px;}
+
+/* settings gear + panel */
+.gear-btn{flex-shrink:0;background:none;border:1px solid var(--line);border-radius:8px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:17px;color:var(--ink-soft);}
+.gear-btn:hover{color:var(--brand);border-color:var(--brand);}
+.gear-btn.spinning{animation:spin .7s linear infinite;}
+@keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+.overlay{position:fixed;inset:0;background:rgba(20,18,14,.4);z-index:60;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}
+.overlay.show{display:flex;}
+.settings-panel{position:relative;background:var(--paper);border:1px solid var(--line);border-radius:14px;max-width:480px;width:100%;padding:26px 24px 22px;}
+.settings-panel h2{font-family:var(--serif);font-size:19px;margin:0 0 4px;}
+.settings-panel .sp-desc{color:var(--ink-soft);font-size:13px;margin:0 0 16px;}
+.settings-panel .sp-section{margin-bottom:20px;}
+.settings-panel .sp-section:last-child{margin-bottom:0;}
+.settings-panel .sp-section h3{font-family:var(--serif);font-size:15px;margin:0 0 8px;}
+.settings-panel .sp-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.settings-panel .sp-status{font-size:12px;color:var(--ink-soft);margin-top:8px;min-height:14px;}
+.settings-close{position:absolute;top:14px;right:14px;}
+@media (max-width:640px){
+  .overlay{padding:0;align-items:flex-end;}
+  .settings-panel{border-radius:14px 14px 0 0;max-height:90vh;overflow-y:auto;}
+}
+
 @media (max-width:640px){
   .wrap{padding:0 14px;}
   h1{font-size:24px;}
@@ -185,6 +208,7 @@ footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 
   .stat .value{font-size:19px;}
   .category-bar .cname{width:88px;font-size:12px;}
   .category-bar .camt{width:70px;font-size:11.5px;}
+  input[type=text],input[type=number],input[type=date],select,textarea{font-size:16px;}
 }
 </style>
 </head>
@@ -195,6 +219,10 @@ footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 
       <div>
         <h1>Control de deudas</h1>
         <div class="subtitle">Ingresa lo que cobraste y la fecha — te digo qué toca pagar y a dónde mandar lo que sobra, siguiendo el método de avalancha.</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0;">
+        <button class="gear-btn" id="btn-header-refresh" title="Actualizar desde Google Sheets" style="display:none;">⟳</button>
+        <button class="gear-btn" id="btn-open-settings" title="Configuración y respaldo">⚙️</button>
       </div>
     </div>
     <nav class="tabs" id="tabs">
@@ -219,6 +247,40 @@ footer.note{color:var(--ink-soft);font-size:12px;text-align:center;padding:26px 
   <footer class="note" id="sync-footer"></footer>
 </div>
 <div class="toast" id="toast"></div>
+
+<div class="overlay" id="settings-overlay">
+  <div class="settings-panel">
+    <button class="icon-btn settings-close" id="btn-close-settings" title="Cerrar">✕</button>
+    <h2>Configuración y respaldo</h2>
+    <p class="sp-desc">Tus datos viven principalmente en este navegador. Desde aquí puedes respaldarlos a un archivo, o sincronizarlos entre dispositivos con Google Sheets.</p>
+
+    <div class="sp-section">
+      <h3>Respaldo en Excel</h3>
+      <div class="sp-row">
+        <button class="btn secondary small" id="btn-export-excel">⬇ Descargar copia (.xlsx)</button>
+        <button class="btn ghost small" id="btn-import-excel">⬆ Restaurar desde Excel</button>
+        <input type="file" id="in-import-excel" accept=".xlsx,.xls" style="display:none;">
+      </div>
+      <div class="sp-status">Restaurar reemplaza todo lo que tienes capturado ahora en este navegador — úsalo para respaldar antes de un cambio grande, o para migrar a otro dispositivo.</div>
+    </div>
+
+    <hr class="rule">
+
+    <div class="sp-section">
+      <h3>Sincronización con Google Sheets</h3>
+      <div class="field"><label>URL de tu Apps Script Web App (termina en /exec)</label>
+        <input type="text" id="sp-sync-url" placeholder="https://script.google.com/macros/s/..../exec">
+      </div>
+      <div class="sp-row">
+        <button class="btn small" id="btn-sp-save-url">Guardar y conectar</button>
+        <button class="btn secondary small" id="btn-sp-pull">⬇ Actualizar</button>
+        <button class="btn secondary small" id="btn-sp-push">⬆ Subir cambios</button>
+        <button class="btn ghost small" id="btn-sp-disconnect">Desconectar</button>
+      </div>
+      <div class="sp-status" id="sp-sync-status"></div>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ============================= DATA ============================= */
@@ -307,15 +369,22 @@ function getSyncUrl(){ return localStorage.getItem(SYNC_URL_KEY) || ''; }
 function setSyncUrl(url){ localStorage.setItem(SYNC_URL_KEY, url); }
 
 let pushTimer = null;
+let isPushing = false;
+let pushPending = false;
+let pushRetryTimer = null;
+let lastSyncAt = null; // Date del último push/pull exitoso
+
 function schedulePush(){
   if(!getSyncUrl()) return;
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(pushToSheet, 900);
+  pushTimer = setTimeout(()=>{ pushTimer = null; pushToSheet(); }, 900);
 }
 
 function setSyncStatus(msg){
-  const el = document.getElementById('sync-status');
-  if(el) el.textContent = msg;
+  ['sync-status','sp-sync-status'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.textContent = msg;
+  });
 }
 
 async function pushToSheet(force){
@@ -323,13 +392,17 @@ async function pushToSheet(force){
   if(!url) return;
   // Salvavidas: si esta pestaña/dispositivo no tiene deudas, telefonía NI historial
   // cargados en memoria, es casi seguro que es una sesión vieja o recién abierta —
-  // no la dejamos sobrescribir la hoja automáticamente. "Sincronizar ahora" sí puede
+  // no la dejamos sobrescribir la hoja automáticamente. "Subir cambios" sí puede
   // forzarlo, por si de verdad quieres subir un estado vacío.
   const pareceVacio = state.debts.length===0 && state.telefonia.length===0 && state.historial.length===0;
   if(pareceVacio && !force){
-    setSyncStatus('Subida automática pausada: este dispositivo no tiene deudas/telefonía/historial cargados. Usa "sincronizar ahora" si es intencional.');
+    setSyncStatus('Subida automática pausada: este dispositivo no tiene deudas/telefonía/historial cargados. Usa "subir cambios" si es intencional.');
     return;
   }
+  // Evita que dos push se crucen: si ya hay uno en curso, encola uno de seguimiento.
+  if(isPushing){ pushPending = true; return; }
+  isPushing = true;
+  clearTimeout(pushRetryTimer);
   setSyncStatus('Sincronizando...');
   try{
     await fetch(url, {
@@ -337,10 +410,19 @@ async function pushToSheet(force){
       headers: {'Content-Type': 'text/plain;charset=utf-8'},
       body: JSON.stringify(state)
     });
-    setSyncStatus('Sincronizado ' + new Date().toLocaleTimeString('es-MX'));
+    lastSyncAt = new Date();
+    setSyncStatus('Sincronizado ' + lastSyncAt.toLocaleTimeString('es-MX'));
   }catch(e){
     console.error('Error al sincronizar con Sheets', e);
-    setSyncStatus('Error al sincronizar — revisa tu conexión o la URL');
+    setSyncStatus('Error al sincronizar — reintentando en unos segundos...');
+    // Reintento automático: una falla de red momentánea no debe perder el cambio.
+    pushRetryTimer = setTimeout(()=>pushToSheet(force), 8000);
+  }finally{
+    isPushing = false;
+    if(pushPending){
+      pushPending = false;
+      schedulePush();
+    }
   }
 }
 
@@ -353,7 +435,8 @@ async function pullFromSheet(silent){
     const data = await res.json();
     state = normalizeFechas(Object.assign(structuredClone(DEFAULT_DATA), data));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    setSyncStatus('Datos cargados ' + new Date().toLocaleTimeString('es-MX'));
+    lastSyncAt = new Date();
+    setSyncStatus('Datos cargados ' + lastSyncAt.toLocaleTimeString('es-MX'));
     return true;
   }catch(e){
     console.error('Error al cargar desde Sheets', e);
@@ -362,22 +445,43 @@ async function pullFromSheet(silent){
   }
 }
 
-function configurarSync(){
-  const current = getSyncUrl();
-  const url = prompt('Pega aquí la URL de tu Apps Script Web App (termina en /exec). Déjalo vacío para desconectar:', current || '');
-  if(url === null) return;
-  const trimmed = url.trim();
-  if(!trimmed){
-    localStorage.removeItem(SYNC_URL_KEY);
-    renderSyncFooter();
-    return;
+// Auto-actualización: al volver a la pestaña y cada pocos minutos, si hay
+// sincronización activa, jala los datos más recientes de la hoja. Si el usuario
+// está escribiendo en un campo en ese momento, no se vuelve a dibujar la pantalla
+// (para no perder lo que está tecleando) — el dato ya quedó guardado por debajo
+// y se refleja en el próximo render natural (cambiar de pestaña, guardar algo).
+async function autoRefresh(){
+  // Nunca jalar de la hoja si hay un cambio local sin subir todavía —
+  // se perdería ese cambio al reemplazar el estado con la versión remota.
+  if(!getSyncUrl() || isPushing || pushPending || pushTimer) return;
+  const active = document.activeElement;
+  const estaEditando = active && ['INPUT','SELECT','TEXTAREA'].includes(active.tagName);
+  const ok = await pullFromSheet(true);
+  if(ok && !estaEditando) renderAll();
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'visible') autoRefresh();
+});
+setInterval(autoRefresh, 3*60*1000);
+
+// Avisa antes de cerrar/recargar si hay un cambio que todavía no terminó de subirse.
+window.addEventListener('beforeunload', (e)=>{
+  if(getSyncUrl() && (pushTimer || isPushing || pushPending)){
+    e.preventDefault();
+    e.returnValue = '';
   }
+});
+
+function conectarSync(url){
+  const trimmed = (url||'').trim();
+  if(!trimmed) return;
   setSyncUrl(trimmed);
   renderSyncFooter();
   pullFromSheet(false).then(ok=>{
     if(ok){
       renderAll();
       pushToSheet(true);
+      showToast('Conectado a Google Sheets');
     } else {
       showToast('No se pudo leer esa hoja — no se subió nada para evitar borrar datos. Revisa la URL e intenta de nuevo.');
     }
@@ -387,29 +491,161 @@ function configurarSync(){
 function renderSyncFooter(){
   const el = document.getElementById('sync-footer');
   const url = getSyncUrl();
-  if(url){
-    el.innerHTML = `☁ Sincronización con Google Sheets activa —
-      <button class="icon-btn" id="btn-sync-pull" style="text-decoration:underline;font-weight:600;">⬇ actualizar antes de editar</button> ·
-      <button class="icon-btn" id="btn-sync-now" style="text-decoration:underline;">⬆ subir cambios</button> ·
-      <button class="icon-btn" id="btn-sync-config" style="text-decoration:underline;">cambiar URL</button> ·
-      <button class="icon-btn" id="btn-sync-off" style="text-decoration:underline;">desconectar</button>
-      <br><span id="sync-status" style="font-size:11px;"></span>
-      <br>Si usas más de un dispositivo, toca "actualizar" al abrir la app antes de capturar algo — así no arriesgas sobrescribir cambios hechos en el otro. También se guarda una copia local en este navegador.`;
-    document.getElementById('btn-sync-pull').addEventListener('click', async ()=>{
-      const ok = await pullFromSheet(false);
-      if(ok) renderAll();
-    });
-    document.getElementById('btn-sync-now').addEventListener('click', ()=>pushToSheet(true));
-    document.getElementById('btn-sync-off').addEventListener('click', ()=>{
-      if(!confirm('¿Desconectar la sincronización con Google Sheets? Tus datos seguirán guardados en este navegador.')) return;
-      localStorage.removeItem(SYNC_URL_KEY);
-      renderSyncFooter();
-    });
-  } else {
-    el.innerHTML = `Todo se guarda solo en este navegador. <button class="icon-btn" id="btn-sync-config" style="text-decoration:underline;">Conectar con Google Sheets</button> para respaldar y sincronizar entre dispositivos.`;
-  }
-  document.getElementById('btn-sync-config').addEventListener('click', configurarSync);
+  el.innerHTML = url
+    ? `☁ Sincronización con Google Sheets activa · <span id="sync-status" style="font-size:11px;"></span>`
+    : `Todo se guarda solo en este navegador. Usa <span style="font-weight:600;">⚙️ Configuración y respaldo</span> para sincronizar entre dispositivos.`;
+  updateHeaderRefreshButton();
 }
+
+function updateHeaderRefreshButton(){
+  const btn = document.getElementById('btn-header-refresh');
+  btn.style.display = getSyncUrl() ? '' : 'none';
+}
+document.getElementById('btn-header-refresh').addEventListener('click', async ()=>{
+  const btn = document.getElementById('btn-header-refresh');
+  if(btn.classList.contains('spinning')) return;
+  btn.classList.add('spinning');
+  const ok = await pullFromSheet(false);
+  if(ok){
+    renderAll();
+    showToast('Datos actualizados desde Google Sheets');
+  } else {
+    showToast('No se pudo actualizar — revisa tu conexión');
+  }
+  btn.classList.remove('spinning');
+});
+
+/* ============================= PANEL DE CONFIGURACIÓN ============================= */
+function refreshSettingsPanel(){
+  const url = getSyncUrl();
+  document.getElementById('sp-sync-url').value = url;
+  const disconnectBtn = document.getElementById('btn-sp-disconnect');
+  const pullBtn = document.getElementById('btn-sp-pull');
+  const pushBtn = document.getElementById('btn-sp-push');
+  disconnectBtn.style.display = url ? '' : 'none';
+  pullBtn.style.display = url ? '' : 'none';
+  pushBtn.style.display = url ? '' : 'none';
+  setSyncStatus(url ? (lastSyncAt ? 'Último sync ' + lastSyncAt.toLocaleTimeString('es-MX') : 'Conectado — sin sincronizar todavía en esta sesión') : 'No conectado a Google Sheets. Todo se guarda solo en este navegador.');
+}
+function openSettings(){
+  refreshSettingsPanel();
+  document.getElementById('settings-overlay').classList.add('show');
+}
+function closeSettings(){
+  document.getElementById('settings-overlay').classList.remove('show');
+}
+document.getElementById('btn-open-settings').addEventListener('click', openSettings);
+document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
+document.getElementById('settings-overlay').addEventListener('click', e=>{
+  if(e.target.id === 'settings-overlay') closeSettings();
+});
+document.getElementById('btn-sp-save-url').addEventListener('click', ()=>{
+  conectarSync(document.getElementById('sp-sync-url').value);
+});
+document.getElementById('btn-sp-pull').addEventListener('click', async ()=>{
+  const ok = await pullFromSheet(false);
+  if(ok) renderAll();
+  refreshSettingsPanel();
+});
+document.getElementById('btn-sp-push').addEventListener('click', async ()=>{
+  await pushToSheet(true);
+  refreshSettingsPanel();
+});
+document.getElementById('btn-sp-disconnect').addEventListener('click', ()=>{
+  if(!confirm('¿Desconectar la sincronización con Google Sheets? Tus datos seguirán guardados en este navegador.')) return;
+  localStorage.removeItem(SYNC_URL_KEY);
+  renderSyncFooter();
+  refreshSettingsPanel();
+});
+
+/* ============================= RESPALDO EN EXCEL ============================= */
+function stateToWorkbook(){
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.debts.map(d=>({
+    id:d.id, nombre:d.nombre, saldo:d.saldo, tasaAnual:d.tasaAnual, pagoMinimo:d.pagoMinimo,
+    pagoTotal:d.pagoTotal, prioridad:d.prioridad, diaPago:d.diaPago, tipo:d.tipo, notas:d.notas||'',
+    ultimoPagoOcurrencia:d.ultimoPagoOcurrencia||''
+  }))), 'Deudas');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.telefonia.map(t=>({
+    id:t.id, nombre:t.nombre, monto:t.monto, diaPago:t.diaPago, ultimoPagoOcurrencia:t.ultimoPagoOcurrencia||''
+  }))), 'Telefonia');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.personales.categorias), 'PersonalesCategorias');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.gastosLog), 'GastosLog');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.ingresosPersonales), 'IngresosPersonales');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.historial), 'Historial');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+    {clave:'presupuesto', valor: state.personales.presupuesto},
+    {clave:'ultimoPeriodo', valor: JSON.stringify(state.ultimoPeriodo||null)}
+  ]), 'Config');
+  return wb;
+}
+function exportExcel(){
+  const wb = stateToWorkbook();
+  XLSX.writeFile(wb, `control-deudas_${todayISO()}.xlsx`);
+  showToast('Respaldo descargado');
+}
+function sheetRows(wb, name){
+  const ws = wb.Sheets[name];
+  return ws ? XLSX.utils.sheet_to_json(ws, {defval:''}) : [];
+}
+function importExcel(file){
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+      const debts = sheetRows(wb,'Deudas').map(r=>({
+        id: r.id || uid('d'), nombre: r.nombre||'', saldo:Number(r.saldo)||0, tasaAnual:Number(r.tasaAnual)||0,
+        pagoMinimo:Number(r.pagoMinimo)||0, pagoTotal:Number(r.pagoTotal)||0, prioridad:Number(r.prioridad)||99,
+        diaPago:String(r.diaPago||''), tipo:r.tipo||'avalancha', notas:r.notas||'',
+        ultimoPagoOcurrencia:r.ultimoPagoOcurrencia||null
+      }));
+      const telefonia = sheetRows(wb,'Telefonia').map(r=>({
+        id:r.id||uid('t'), nombre:r.nombre||'', monto:Number(r.monto)||0,
+        diaPago:String(r.diaPago||''), ultimoPagoOcurrencia:r.ultimoPagoOcurrencia||null
+      }));
+      const categorias = sheetRows(wb,'PersonalesCategorias').map(r=>({nombre:r.nombre||'', monto:Number(r.monto)||0}));
+      const gastosLog = sheetRows(wb,'GastosLog').map(r=>({id:r.id||uid('g'), fecha:sliceISO(r.fecha), categoria:r.categoria||'', monto:Number(r.monto)||0, descripcion:r.descripcion||''}));
+      const ingresosPersonales = sheetRows(wb,'IngresosPersonales').map(r=>({id:r.id||uid('ip'), fecha:sliceISO(r.fecha), monto:Number(r.monto)||0, descripcion:r.descripcion||''}));
+      const historial = sheetRows(wb,'Historial').map(r=>({id:r.id||uid('h'), fecha:sliceISO(r.fecha), nombre:r.nombre||'', monto:Number(r.monto)||0, tipo:r.tipo||'avalancha'}));
+      const configRows = sheetRows(wb,'Config');
+      const cfg = {}; configRows.forEach(r=>{ cfg[r.clave]=r.valor; });
+      let ultimoPeriodo = null;
+      try{ ultimoPeriodo = cfg.ultimoPeriodo ? JSON.parse(cfg.ultimoPeriodo) : null; }catch(_e){ ultimoPeriodo = null; }
+
+      if(debts.length===0 && telefonia.length===0 && historial.length===0){
+        showToast('Ese archivo no parece tener datos reconocibles — no se importó nada');
+        return;
+      }
+      if(!confirm('Esto reemplazará TODOS los datos que tienes ahora en este navegador (deudas, historial, gastos, etc.) con lo que venga en el Excel. ¿Continuar?')) return;
+
+      state = normalizeFechas({
+        debts, telefonia,
+        personales: {presupuesto: Number(cfg.presupuesto)||0, categorias},
+        gastosLog, ingresosPersonales, historial, ultimoPeriodo
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      renderAll();
+      renderSyncFooter();
+      showToast('Datos restaurados desde Excel');
+      if(getSyncUrl() && confirm('¿Subir estos datos restaurados a tu Google Sheet conectada? Esto sobrescribirá lo que haya ahí.')){
+        pushToSheet(true);
+      }
+    }catch(err){
+      console.error(err);
+      showToast('No se pudo leer ese archivo — revisa que sea un Excel exportado por esta app');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+document.getElementById('btn-export-excel').addEventListener('click', exportExcel);
+document.getElementById('btn-import-excel').addEventListener('click', ()=>{
+  document.getElementById('in-import-excel').click();
+});
+document.getElementById('in-import-excel').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  if(file) importExcel(file);
+  e.target.value = '';
+});
 
 /* ============================= UTIL ============================= */
 const fmt = n => (n<0?'-$':'$') + Math.abs(Math.round(n)).toLocaleString('es-MX');
