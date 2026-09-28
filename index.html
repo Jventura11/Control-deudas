@@ -808,10 +808,10 @@ function calcularHoy(){
   if(dueFixed.length===0 && dueAvalanche.length===0 && apartado<=0){
     html += `<div class="card"><div class="empty-msg">No hay pagos con fecha dentro de este rango. Aun así, considera separar tu presupuesto de gastos personales.</div></div>`;
   } else {
-    html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas — no se pueden recortar.</div>`;
+    html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas. Normalmente se pagan siempre — desmárcalas solo si ese ingreso ya va directo a otra cosa (por ejemplo, si mandaste el pago directo a las tarjetas) y no quieres que cuenten en este cálculo.</div>`;
     if(dueFixed.length){
       dueFixed.forEach(item=>{
-        html += `<div class="due-item"><input type="checkbox" checked disabled><div class="name">${item.nombre}</div><div class="amt-out">${fmt2(item.monto)}</div></div>`;
+        html += `<div class="due-item"><input type="checkbox" class="chk-fixed" data-id="${item.id}" data-origen="${item.origen}" checked><div class="name">${item.nombre}</div><div class="amt-out" id="amt-fixed-${item.origen}-${item.id}">${fmt2(item.monto)}</div></div>`;
       });
     } else {
       html += `<div class="empty-msg">Ninguno esta vez.</div>`;
@@ -839,7 +839,8 @@ function calcularHoy(){
     html += `</div>`;
 
     html += `<div class="card" style="margin-top:16px;"><div class="section-title">Gastos personales de este periodo</div>
-      <div class="due-item"><input type="checkbox" checked disabled><div class="name">Presupuesto (${dias} días)</div><div class="amt-out" id="amt-personales"></div></div>
+      <div class="section-desc">Desmárcalo si este ingreso no es para tu gasto diario — por ejemplo, si va directo a las tarjetas.</div>
+      <div class="due-item"><input type="checkbox" id="chk-personales" checked><div class="name">Presupuesto (${dias} días)</div><div class="amt-out" id="amt-personales"></div></div>
       </div>`;
 
     html += `<div id="caja-resultado"></div>`;
@@ -847,14 +848,22 @@ function calcularHoy(){
   resultado.innerHTML = html;
 
   // wire up recalculation on toggle/select change
-  resultado.querySelectorAll('.chk-avalanche, .sel-estrategia').forEach(elm=>{
+  resultado.querySelectorAll('.chk-avalanche, .sel-estrategia, .chk-fixed, #chk-personales').forEach(elm=>{
     elm.addEventListener('change', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado));
   });
   if(dueFixed.length || dueAvalanche.length || apartado>0) recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado);
 }
 
 function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
-  let totalFijo = dueFixed.reduce((s,i)=>s+i.monto,0);
+  let totalFijo = 0;
+  const dueFixedSeleccionado = [];
+  dueFixed.forEach(item=>{
+    const chk = document.querySelector(`.chk-fixed[data-id="${item.id}"][data-origen="${item.origen}"]`);
+    if(!chk || !chk.checked) return;
+    totalFijo += item.monto;
+    dueFixedSeleccionado.push(item);
+  });
+
   let totalAvalancheSeleccionado = 0;
   const seleccionAvalancheDetalle = [];
 
@@ -868,9 +877,12 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
     seleccionAvalancheDetalle.push({id:d.id, nombre:d.nombre, monto, ocurrencia:d.ocurrencia});
   });
 
-  const presupuestoPersonal = state.personales.presupuesto * (dias/30);
+  const montoPresupuestoNominal = state.personales.presupuesto * (dias/30);
+  const chkPersonales = document.getElementById('chk-personales');
+  const incluirPersonales = !chkPersonales || chkPersonales.checked;
+  const presupuestoPersonal = incluirPersonales ? montoPresupuestoNominal : 0;
   const amtPersonalesEl = document.getElementById('amt-personales');
-  if(amtPersonalesEl) amtPersonalesEl.textContent = fmt2(presupuestoPersonal);
+  if(amtPersonalesEl) amtPersonalesEl.textContent = fmt2(montoPresupuestoNominal);
 
   const totalNecesario = totalFijo + totalAvalancheSeleccionado + presupuestoPersonal;
   const sobrante = ingreso - totalNecesario;
@@ -907,7 +919,7 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
   </div>`;
 
   cajaEl.innerHTML = html;
-  cajaEl.dataset.payload = JSON.stringify({dueFixed, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
+  cajaEl.dataset.payload = JSON.stringify({dueFixed: dueFixedSeleccionado, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
   document.getElementById('btn-confirmar-pago').addEventListener('click', ()=>confirmarPago(cajaEl));
 }
 
