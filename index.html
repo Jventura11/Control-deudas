@@ -808,10 +808,10 @@ function calcularHoy(){
   if(dueFixed.length===0 && dueAvalanche.length===0 && apartado<=0){
     html += `<div class="card"><div class="empty-msg">No hay pagos con fecha dentro de este rango. Aun así, considera separar tu presupuesto de gastos personales.</div></div>`;
   } else {
-    html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas — no se pueden recortar.</div>`;
+    html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas. Vienen marcados por defecto, pero desmárcalos si este periodo no es necesario pagarlos.</div>`;
     if(dueFixed.length){
-      dueFixed.forEach(item=>{
-        html += `<div class="due-item"><input type="checkbox" checked disabled><div class="name">${item.nombre}</div><div class="amt-out">${fmt2(item.monto)}</div></div>`;
+      dueFixed.forEach((item, idx)=>{
+        html += `<div class="due-item"><input type="checkbox" class="chk-fijo" data-idx="${idx}" checked><div class="name">${item.nombre} ${tagDiasFaltantes(daysBetween(todayISO(), item.ocurrencia))}</div><div class="amt-out">${fmt2(item.monto)}</div></div>`;
       });
     } else {
       html += `<div class="empty-msg">Ninguno esta vez.</div>`;
@@ -825,7 +825,7 @@ function calcularHoy(){
         html += `
         <div class="due-item">
           <input type="checkbox" class="chk-avalanche" data-id="${d.id}" checked>
-          <div class="name">${d.nombre} <span class="meta">· ${d.tasaAnual}% anual</span></div>
+          <div class="name">${d.nombre} <span class="meta">· ${d.tasaAnual}% anual</span> ${tagDiasFaltantes(daysBetween(todayISO(), d.ocurrencia))}</div>
           <select class="sel-estrategia" data-id="${d.id}">
             <option value="minimo">Mínimo ${fmt2(d.pagoMinimo)}</option>
             <option value="completo">Completo ${fmt2(d.pagoTotal)}</option>
@@ -841,7 +841,7 @@ function calcularHoy(){
     html += `</div>`;
 
     html += `<div class="card" style="margin-top:16px;"><div class="section-title">Gastos personales de este periodo</div>
-      <div class="due-item"><input type="checkbox" checked disabled><div class="name">Presupuesto (${dias} días)</div><div class="amt-out" id="amt-personales"></div></div>
+      <div class="due-item"><input type="checkbox" id="chk-personales" checked><div class="name">Presupuesto (${dias} días)</div><div class="amt-out" id="amt-personales"></div></div>
       </div>`;
 
     html += `<div id="caja-resultado"></div>`;
@@ -859,7 +859,7 @@ function calcularHoy(){
   });
 
   // wire up recalculation on toggle/select/monto change
-  resultado.querySelectorAll('.chk-avalanche, .sel-estrategia').forEach(elm=>{
+  resultado.querySelectorAll('.chk-avalanche, .sel-estrategia, .chk-fijo, #chk-personales').forEach(elm=>{
     elm.addEventListener('change', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado));
   });
   resultado.querySelectorAll('.otro-input').forEach(inp=>{
@@ -869,7 +869,15 @@ function calcularHoy(){
 }
 
 function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
-  let totalFijo = dueFixed.reduce((s,i)=>s+i.monto,0);
+  let totalFijo = 0;
+  const dueFixedSeleccionado = [];
+  dueFixed.forEach((item, idx)=>{
+    const chk = document.querySelector(`.chk-fijo[data-idx="${idx}"]`);
+    if(chk && chk.checked){
+      totalFijo += item.monto;
+      dueFixedSeleccionado.push(item);
+    }
+  });
   let totalAvalancheSeleccionado = 0;
   const seleccionAvalancheDetalle = [];
 
@@ -891,7 +899,9 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
     seleccionAvalancheDetalle.push({id:d.id, nombre:d.nombre, monto, ocurrencia:d.ocurrencia});
   });
 
-  const presupuestoPersonal = state.personales.presupuesto * (dias/30);
+  const chkPersonales = document.getElementById('chk-personales');
+  const personalesIncluido = !chkPersonales || chkPersonales.checked;
+  const presupuestoPersonal = personalesIncluido ? state.personales.presupuesto * (dias/30) : 0;
   const amtPersonalesEl = document.getElementById('amt-personales');
   if(amtPersonalesEl) amtPersonalesEl.textContent = fmt2(presupuestoPersonal);
 
@@ -930,7 +940,7 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
   </div>`;
 
   cajaEl.innerHTML = html;
-  cajaEl.dataset.payload = JSON.stringify({dueFixed, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
+  cajaEl.dataset.payload = JSON.stringify({dueFixed: dueFixedSeleccionado, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
   document.getElementById('btn-confirmar-pago').addEventListener('click', ()=>confirmarPago(cajaEl));
 }
 
@@ -982,7 +992,7 @@ function renderDeudas(){
   const el = document.getElementById('view-deudas');
   const activas = state.debts.filter(d=>d.tipo==='avalancha').sort((a,b)=>a.prioridad-b.prioridad);
   const fijas = state.debts.filter(d=>d.tipo==='fijo');
-  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
+  const ref = todayISO();
 
   let rows = activas.map(d=>`
     <tr>
@@ -1069,7 +1079,7 @@ function renderDeudas(){
 /* ============================= RENDER: TELEFONIA ============================= */
 function renderTelefonia(){
   const el = document.getElementById('view-telefonia');
-  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
+  const ref = todayISO();
   let rows = state.telefonia.map(t=>`
     <tr>
       <td><input type="text" data-field="nombre" data-id="${t.id}" value="${t.nombre}" style="font-weight:600;"></td>
