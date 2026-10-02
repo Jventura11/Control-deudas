@@ -808,17 +808,17 @@ function calcularHoy(){
   if(dueFixed.length===0 && dueAvalanche.length===0 && apartado<=0){
     html += `<div class="card"><div class="empty-msg">No hay pagos con fecha dentro de este rango. Aun así, considera separar tu presupuesto de gastos personales.</div></div>`;
   } else {
-    html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas. Normalmente se pagan siempre — desmárcalas solo si ese ingreso ya va directo a otra cosa (por ejemplo, si mandaste el pago directo a las tarjetas) y no quieres que cuenten en este cálculo.</div>`;
+    html += `<div class="card"><div class="section-title">Pagos obligatorios de este periodo</div><div class="section-desc">Servicios y cuotas fijas — no se pueden recortar.</div>`;
     if(dueFixed.length){
       dueFixed.forEach(item=>{
-        html += `<div class="due-item"><input type="checkbox" class="chk-fixed" data-id="${item.id}" data-origen="${item.origen}" checked><div class="name">${item.nombre}</div><div class="amt-out" id="amt-fixed-${item.origen}-${item.id}">${fmt2(item.monto)}</div></div>`;
+        html += `<div class="due-item"><input type="checkbox" checked disabled><div class="name">${item.nombre}</div><div class="amt-out">${fmt2(item.monto)}</div></div>`;
       });
     } else {
       html += `<div class="empty-msg">Ninguno esta vez.</div>`;
     }
     html += `</div><hr class="rule">`;
 
-    html += `<div class="card"><div class="section-title">Tarjetas con fecha en este periodo</div><div class="section-desc">Elige mínimo o completo para cada una — esto afecta cuánto te queda para la avalancha.</div>`;
+    html += `<div class="card"><div class="section-title">Tarjetas con fecha en este periodo</div><div class="section-desc">Elige mínimo, completo, u "otro monto" para capturar cualquier cantidad distinta — esto afecta cuánto te queda para la avalancha.</div>`;
     if(dueAvalanche.length){
       dueAvalanche.sort((a,b)=>a.prioridad-b.prioridad);
       dueAvalanche.forEach(d=>{
@@ -829,7 +829,9 @@ function calcularHoy(){
           <select class="sel-estrategia" data-id="${d.id}">
             <option value="minimo">Mínimo ${fmt2(d.pagoMinimo)}</option>
             <option value="completo">Completo ${fmt2(d.pagoTotal)}</option>
+            <option value="otro">Otro monto…</option>
           </select>
+          <input type="text" inputmode="decimal" class="money otro-input" data-id="${d.id}" placeholder="0.00" style="display:none;width:92px;">
           <div class="amt-out" id="amt-${d.id}">${fmt2(d.pagoMinimo)}</div>
         </div>`;
       });
@@ -839,31 +841,35 @@ function calcularHoy(){
     html += `</div>`;
 
     html += `<div class="card" style="margin-top:16px;"><div class="section-title">Gastos personales de este periodo</div>
-      <div class="section-desc">Desmárcalo si este ingreso no es para tu gasto diario — por ejemplo, si va directo a las tarjetas.</div>
-      <div class="due-item"><input type="checkbox" id="chk-personales" checked><div class="name">Presupuesto (${dias} días)</div><div class="amt-out" id="amt-personales"></div></div>
+      <div class="due-item"><input type="checkbox" checked disabled><div class="name">Presupuesto (${dias} días)</div><div class="amt-out" id="amt-personales"></div></div>
       </div>`;
 
     html += `<div id="caja-resultado"></div>`;
   }
   resultado.innerHTML = html;
+  wireMoneyInputs(resultado);
 
-  // wire up recalculation on toggle/select change
-  resultado.querySelectorAll('.chk-avalanche, .sel-estrategia, .chk-fixed, #chk-personales').forEach(elm=>{
+  // el select de estrategia muestra/oculta el campo de "otro monto"
+  resultado.querySelectorAll('.sel-estrategia').forEach(sel=>{
+    const otroInput = resultado.querySelector(`.otro-input[data-id="${sel.dataset.id}"]`);
+    sel.addEventListener('change', ()=>{
+      if(otroInput) otroInput.style.display = sel.value==='otro' ? '' : 'none';
+      if(otroInput && sel.value==='otro') otroInput.focus();
+    });
+  });
+
+  // wire up recalculation on toggle/select/monto change
+  resultado.querySelectorAll('.chk-avalanche, .sel-estrategia').forEach(elm=>{
     elm.addEventListener('change', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado));
+  });
+  resultado.querySelectorAll('.otro-input').forEach(inp=>{
+    inp.addEventListener('input', ()=>recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado));
   });
   if(dueFixed.length || dueAvalanche.length || apartado>0) recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado);
 }
 
 function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
-  let totalFijo = 0;
-  const dueFixedSeleccionado = [];
-  dueFixed.forEach(item=>{
-    const chk = document.querySelector(`.chk-fixed[data-id="${item.id}"][data-origen="${item.origen}"]`);
-    if(!chk || !chk.checked) return;
-    totalFijo += item.monto;
-    dueFixedSeleccionado.push(item);
-  });
-
+  let totalFijo = dueFixed.reduce((s,i)=>s+i.monto,0);
   let totalAvalancheSeleccionado = 0;
   const seleccionAvalancheDetalle = [];
 
@@ -871,18 +877,23 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
     const chk = document.querySelector(`.chk-avalanche[data-id="${d.id}"]`);
     const sel = document.querySelector(`.sel-estrategia[data-id="${d.id}"]`);
     if(!chk || !chk.checked) return;
-    const monto = sel.value==='completo' ? d.pagoTotal : d.pagoMinimo;
+    let monto;
+    if(sel.value==='completo'){
+      monto = d.pagoTotal;
+    } else if(sel.value==='otro'){
+      const otroInput = document.querySelector(`.otro-input[data-id="${d.id}"]`);
+      monto = otroInput ? parseMoneyInput(otroInput.value) : 0;
+    } else {
+      monto = d.pagoMinimo;
+    }
     document.getElementById('amt-'+d.id).textContent = fmt2(monto);
     totalAvalancheSeleccionado += monto;
     seleccionAvalancheDetalle.push({id:d.id, nombre:d.nombre, monto, ocurrencia:d.ocurrencia});
   });
 
-  const montoPresupuestoNominal = state.personales.presupuesto * (dias/30);
-  const chkPersonales = document.getElementById('chk-personales');
-  const incluirPersonales = !chkPersonales || chkPersonales.checked;
-  const presupuestoPersonal = incluirPersonales ? montoPresupuestoNominal : 0;
+  const presupuestoPersonal = state.personales.presupuesto * (dias/30);
   const amtPersonalesEl = document.getElementById('amt-personales');
-  if(amtPersonalesEl) amtPersonalesEl.textContent = fmt2(montoPresupuestoNominal);
+  if(amtPersonalesEl) amtPersonalesEl.textContent = fmt2(presupuestoPersonal);
 
   const totalNecesario = totalFijo + totalAvalancheSeleccionado + presupuestoPersonal;
   const sobrante = ingreso - totalNecesario;
@@ -919,7 +930,7 @@ function recalcCaja(ingreso, dias, dueFixed, dueAvalanche, apartado){
   </div>`;
 
   cajaEl.innerHTML = html;
-  cajaEl.dataset.payload = JSON.stringify({dueFixed: dueFixedSeleccionado, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
+  cajaEl.dataset.payload = JSON.stringify({dueFixed, seleccionAvalancheDetalle, presupuestoPersonal, sobrante, objetivo: objetivo?objetivo.id:null, apartado, fecha: document.getElementById('in-fecha').value});
   document.getElementById('btn-confirmar-pago').addEventListener('click', ()=>confirmarPago(cajaEl));
 }
 
@@ -971,7 +982,7 @@ function renderDeudas(){
   const el = document.getElementById('view-deudas');
   const activas = state.debts.filter(d=>d.tipo==='avalancha').sort((a,b)=>a.prioridad-b.prioridad);
   const fijas = state.debts.filter(d=>d.tipo==='fijo');
-  const ref = todayISO(); // "próximo pago" siempre se cuenta desde hoy de verdad, no desde la última fecha capturada en Hoy
+  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
 
   let rows = activas.map(d=>`
     <tr>
@@ -1058,7 +1069,7 @@ function renderDeudas(){
 /* ============================= RENDER: TELEFONIA ============================= */
 function renderTelefonia(){
   const el = document.getElementById('view-telefonia');
-  const ref = todayISO(); // "próximo pago" siempre se cuenta desde hoy de verdad, no desde la última fecha capturada en Hoy
+  const ref = (state.ultimoPeriodo && state.ultimoPeriodo.fecha) || todayISO();
   let rows = state.telefonia.map(t=>`
     <tr>
       <td><input type="text" data-field="nombre" data-id="${t.id}" value="${t.nombre}" style="font-weight:600;"></td>
